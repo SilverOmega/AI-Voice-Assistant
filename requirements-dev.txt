@@ -1,0 +1,4 @@
+# Everything needed to run and test all three services natively from one virtualenv.
+-r services/chat/requirements-dev.txt
+-r services/voice/requirements.txt
+-r services/wakeword/requirements.txt

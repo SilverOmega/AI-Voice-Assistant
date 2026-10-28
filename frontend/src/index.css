@@ -1,0 +1,74 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  @apply bg-white text-slate-900 antialiased dark:bg-slate-950 dark:text-slate-100;
+}
+
+/* Minimal styling for assistant markdown. */
+.markdown > * + * {
+  margin-top: 0.6em;
+}
+.markdown ul {
+  list-style: disc;
+  padding-left: 1.25rem;
+}
+.markdown ol {
+  list-style: decimal;
+  padding-left: 1.25rem;
+}
+.markdown a {
+  @apply text-indigo-600 underline dark:text-indigo-400;
+}
+.markdown code {
+  @apply rounded bg-slate-200/70 px-1 py-0.5 text-[0.9em] dark:bg-slate-700/70;
+}
+.markdown pre {
+  @apply overflow-x-auto rounded-lg bg-slate-900 p-3 text-slate-100 dark:bg-black/60;
+}
+.markdown pre code {
+  @apply bg-transparent p-0;
+}
+.markdown h1,
+.markdown h2,
+.markdown h3 {
+  @apply font-semibold;
+}
+.markdown table {
+  @apply block overflow-x-auto text-sm;
+}
+.markdown th,
+.markdown td {
+  @apply border border-slate-300 px-2 py-1 dark:border-slate-700;
+}
+.markdown blockquote {
+  @apply border-l-4 border-slate-300 pl-3 text-slate-600 dark:border-slate-600 dark:text-slate-400;
+}
+
+@keyframes pulse-ring {
+  0% {
+    transform: scale(1);
+    opacity: 0.6;
+  }
+  100% {
+    transform: scale(1.6);
+    opacity: 0;
+  }
+}
+.pulse-ring::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  background: currentColor;
+  animation: pulse-ring 1.4s ease-out infinite;
+}
