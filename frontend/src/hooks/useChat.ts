@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, streamMessage } from "../lib/api";
 import type { PreparedImage } from "../lib/images";
+import type { PlanTemplate } from "../lib/plans";
 import type { Message, Session, Source } from "../lib/types";
 
 function localMessage(sessionId: string, role: "user" | "assistant", content: string, source: Source): Message {
@@ -61,9 +62,9 @@ export function useChat() {
 
   const newSession = useCallback(() => selectSession(null), [selectSession]);
 
-  const ensureSession = useCallback(async (): Promise<string> => {
+  const ensureSession = useCallback(async (title?: string): Promise<string> => {
     if (activeIdRef.current) return activeIdRef.current;
-    const session = await api.createSession();
+    const session = await api.createSession(title);
     activeIdRef.current = session.id;
     setActiveId(session.id);
     setSessions((s) => [session, ...s]);
@@ -94,7 +95,7 @@ export function useChat() {
     });
 
   const send = useCallback(
-    async (text: string, images: PreparedImage[] = []) => {
+    async (text: string, images: PreparedImage[] = [], newSessionTitle?: string) => {
       const content = text.trim();
       if ((!content && images.length === 0) || streaming) return;
       setError(null);
@@ -102,7 +103,7 @@ export function useChat() {
       const controller = new AbortController();
       abortRef.current = controller;
       try {
-        const sessionId = await ensureSession();
+        const sessionId = await ensureSession(newSessionTitle);
         setMessages((m) => [
           ...m,
           { ...localMessage(sessionId, "user", content, "text"), previews: images.map((i) => i.previewUrl) },
@@ -137,6 +138,16 @@ export function useChat() {
   );
 
   const stop = useCallback(() => abortRef.current?.abort(), []);
+
+  /** Opens a new chat named after the plan and asks the assistant to help build it. */
+  const startPlan = useCallback(
+    (plan: PlanTemplate) => {
+      if (streaming) return;
+      selectSession(null);
+      void send(plan.prompt, [], `Plan: ${plan.title}`);
+    },
+    [streaming, selectSession, send],
+  );
 
   // ---- voice turn events (from the voice service) ---------------------------
 
@@ -182,6 +193,7 @@ export function useChat() {
     deleteSession,
     send,
     stop,
+    startPlan,
     voice,
   };
 }

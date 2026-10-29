@@ -31,6 +31,7 @@ class ProviderRegistry:
                     settings.ollama_base_url,
                     settings.ollama_model,
                     keep_alive=settings.ollama_keep_alive,
+                    num_thread=settings.ollama_num_thread,
                 ),
                 "anthropic": AnthropicProvider(
                     settings.anthropic_model,

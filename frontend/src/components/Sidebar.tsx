@@ -1,7 +1,8 @@
 import { useState } from "react";
 import type { HealthState } from "../hooks/useHealth";
+import { PLAN_TEMPLATES, type PlanTemplate } from "../lib/plans";
 import type { Session } from "../lib/types";
-import { GearIcon, PencilIcon, PlusIcon, TrashIcon, XIcon } from "./icons";
+import { ChevronDownIcon, GearIcon, PencilIcon, PlusIcon, TrashIcon, XIcon } from "./icons";
 
 interface Props {
   sessions: Session[];
@@ -11,6 +12,9 @@ interface Props {
   onClose: () => void;
   onSelect: (id: string) => void;
   onNew: () => void;
+  onPlan: (plan: PlanTemplate) => void;
+  /** A reply is streaming; a plan can't start until it ends. */
+  busy: boolean;
   onRename: (id: string, title: string) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
   onSettings: () => void;
@@ -39,6 +43,7 @@ export function Sidebar(props: Props) {
           >
             <PlusIcon width={16} height={16} /> New chat
           </button>
+          <PlanMenu onPick={props.onPlan} busy={props.busy} />
         </div>
         <nav className="mt-3 flex-1 space-y-0.5 overflow-y-auto px-2 pb-4" aria-label="Conversations">
           {sessions.length === 0 && (
@@ -70,6 +75,47 @@ export function Sidebar(props: Props) {
         </div>
       </aside>
     </>
+  );
+}
+
+function PlanMenu({ onPick, busy }: { onPick: (plan: PlanTemplate) => void; busy: boolean }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="mt-2" onKeyDown={(e) => e.key === "Escape" && setOpen(false)}>
+      <button
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        aria-controls="plan-suggestions"
+        className="flex w-full items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium hover:bg-white dark:border-slate-700 dark:hover:bg-slate-800"
+      >
+        <PlusIcon width={16} height={16} /> Plan
+        <ChevronDownIcon width={14} height={14} className={`ml-auto text-slate-500 transition-transform ${open ? "rotate-180" : ""}`} />
+      </button>
+      {open && (
+        <ul
+          id="plan-suggestions"
+          aria-label="Plan suggestions"
+          className="mt-1 space-y-0.5 rounded-lg border border-slate-200 bg-white p-1 shadow-sm dark:border-slate-700 dark:bg-slate-800"
+        >
+          {PLAN_TEMPLATES.map((plan) => (
+            <li key={plan.id}>
+              <button
+                onClick={() => {
+                  setOpen(false);
+                  onPick(plan);
+                }}
+                disabled={busy}
+                title={busy ? "Wait for the current reply to finish, or stop it" : undefined}
+                className="w-full rounded-md px-2.5 py-1.5 text-left hover:bg-slate-100 disabled:opacity-50 disabled:hover:bg-transparent dark:hover:bg-slate-700"
+              >
+                <span className="block text-sm">{plan.title}</span>
+                <span className="block text-xs text-slate-500 dark:text-slate-400">{plan.description}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }
 

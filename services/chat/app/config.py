@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = "llama3.2"
     ollama_keep_alive: str = "24h"  # Go duration; "-1m" never unloads
+    ollama_num_thread: int = Field(default=0, ge=0)  # 0 -> Ollama default (one per core)
 
     # Claude (Anthropic). Credentials are resolved by the SDK (ANTHROPIC_API_KEY etc.).
     anthropic_model: str = "claude-opus-5-5"

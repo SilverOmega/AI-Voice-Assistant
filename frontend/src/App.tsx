@@ -64,6 +64,11 @@ export default function App() {
           chat.newSession();
           setSidebarOpen(false);
         }}
+        onPlan={(plan) => {
+          chat.startPlan(plan);
+          setSidebarOpen(false);
+        }}
+        busy={chat.streaming}
         onRename={chat.renameSession}
         onDelete={chat.deleteSession}
         onSettings={() => setSettingsOpen(true)}

@@ -16,12 +16,16 @@ class OllamaProvider(LLMProvider):
         base_url: str,
         default_model: str,
         keep_alive: str = "24h",
+        num_thread: int = 0,
         client: httpx.AsyncClient | None = None,
     ):
         self.default_model = default_model
         # How long Ollama keeps the model in memory after a request. Its own default (5m)
         # means the first message after a short break waits for a full reload.
         self.keep_alive = keep_alive
+        # CPU threads for generation (0 = Ollama decides). When other programs keep some cores
+        # busy, fewer threads than cores is much faster: llama.cpp threads wait on each other.
+        self.num_thread = num_thread
         self._base_url = base_url.rstrip("/")
         self._vision: dict[str, bool] = {}
         self._client = client or httpx.AsyncClient(
@@ -47,7 +51,11 @@ class OllamaProvider(LLMProvider):
             "messages": messages,
             "stream": True,
             "keep_alive": self.keep_alive,
-            "options": {"temperature": params.temperature, "num_predict": params.max_tokens},
+            "options": {
+                **self._load_options(),
+                "temperature": params.temperature,
+                "num_predict": params.max_tokens,
+            },
         }
         try:
             async with self._client.stream("POST", f"{self._base_url}/api/chat", json=body) as resp:
@@ -106,9 +114,13 @@ class OllamaProvider(LLMProvider):
 
     async def warm_up(self, model: str) -> None:
         # A generate request without a prompt only loads the model.
-        body = {"model": model, "keep_alive": self.keep_alive}
+        # Same load options as chat requests, or the first message reloads the model.
+        body = {"model": model, "keep_alive": self.keep_alive, "options": self._load_options()}
         resp = await self._client.post(f"{self._base_url}/api/generate", json=body)
         resp.raise_for_status()
+
+    def _load_options(self) -> dict:
+        return {"num_thread": self.num_thread} if self.num_thread > 0 else {}
 
     async def aclose(self) -> None:
         await self._client.aclose()

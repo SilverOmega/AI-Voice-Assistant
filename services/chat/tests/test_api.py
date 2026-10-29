@@ -237,7 +237,10 @@ async def test_model_is_warmed_up_at_startup_and_on_model_switch(tmp_path):
             assert provider.warmed == ["fake-model", "other-model"]
 
 
-async def test_ollama_requests_carry_keep_alive():
+@pytest.mark.parametrize(
+    ("num_thread", "load_options"), [(0, {}), (2, {"num_thread": 2})]
+)
+async def test_ollama_requests_carry_load_options(num_thread, load_options):
     from app.llm.ollama import OllamaProvider
 
     bodies: list[dict] = []
@@ -250,11 +253,15 @@ async def test_ollama_requests_carry_keep_alive():
         return httpx.Response(200, json={"done": True})
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    provider = OllamaProvider("http://ollama", "m", keep_alive="1h", client=client)
+    provider = OllamaProvider(
+        "http://ollama", "m", keep_alive="1h", num_thread=num_thread, client=client
+    )
     await provider.warm_up("m")
     params = GenerationParams(model="m", system="", temperature=0.5, max_tokens=10)
     assert [t async for t in provider.stream([ChatTurn("user", "hey")], params)] == ["hi"]
 
-    assert bodies[0] == {"model": "m", "keep_alive": "1h"}
+    # Warm-up and chat must load the model the same way, or Ollama reloads it.
+    assert bodies[0] == {"model": "m", "keep_alive": "1h", "options": load_options}
     assert bodies[1]["keep_alive"] == "1h"
+    assert bodies[1]["options"] == {**load_options, "temperature": 0.5, "num_predict": 10}
     await provider.aclose()

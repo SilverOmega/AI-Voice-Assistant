@@ -114,6 +114,7 @@ All settings are environment variables. Put them in `.env`; Docker and the nativ
 | `LLM_MODEL` | *(provider default)* | Overrides `OLLAMA_MODEL` / `ANTHROPIC_MODEL` |
 | `OLLAMA_MODEL` | `llama3.2` | Pulled automatically in Docker |
 | `OLLAMA_KEEP_ALIVE` | `24h` | How long the model stays loaded after a reply (`-1m` = never unload). The chat service also preloads the model at startup and when you switch models. |
+| `OLLAMA_NUM_THREAD` | `0` | CPU threads for generation (`0` = one per core). Set it below the number of free cores when other programs keep the CPU busy; oversubscribed threads can slow replies 10–30×. Ignored when the model runs on a GPU. |
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | Native runs only |
 | `OLLAMA_DOCKER_URL` | `http://ollama:11434` | Docker: point at a host Ollama via `http://host.docker.internal:11434` |
 | `ANTHROPIC_API_KEY` | — | Required for Claude |
