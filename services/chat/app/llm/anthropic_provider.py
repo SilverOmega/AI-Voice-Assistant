@@ -5,7 +5,7 @@ from collections.abc import AsyncIterator
 
 import anthropic
 
-from .base import ChatTurn, GenerationParams, LLMError, LLMProvider
+from .base import TRUNCATED_NOTE, ChatTurn, GenerationParams, LLMAuthError, LLMError, LLMProvider
 
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
 
@@ -76,9 +76,9 @@ class AnthropicProvider(LLMProvider):
             if final.stop_reason == "refusal":
                 yield "\n\n(I can't help with that request.)"
             elif final.stop_reason == "max_tokens":
-                yield "\n\n(Response truncated: output token limit reached.)"
+                yield TRUNCATED_NOTE
         except anthropic.AuthenticationError as exc:
-            raise LLMError(
+            raise LLMAuthError(
                 "Claude rejected the credentials. Set ANTHROPIC_API_KEY for the chat service."
             ) from exc
         except anthropic.NotFoundError as exc:
@@ -91,7 +91,7 @@ class AnthropicProvider(LLMProvider):
             raise LLMError("Cannot reach the Claude API. Check your network connection.") from exc
         except TypeError as exc:
             # Raised by the SDK when no credentials could be resolved at all.
-            raise LLMError(f"Claude is not configured: {exc}") from exc
+            raise LLMAuthError(f"Claude is not configured: {exc}") from exc
 
     async def check(self, model: str) -> tuple[bool, str]:
         if not (os.getenv("ANTHROPIC_API_KEY") or os.getenv("ANTHROPIC_AUTH_TOKEN")):

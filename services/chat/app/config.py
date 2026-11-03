@@ -39,6 +39,36 @@ class Settings(BaseSettings):
     anthropic_effort: Literal["low", "medium", "high", "xhigh", "max"] = "low"
     anthropic_fallbacks: bool = True
 
+    # Task automation. Approved emails are sent over SMTP if it's set up; otherwise saved to the
+    # mailbox's Drafts folder over IMAP if that's set up; otherwise they open ready to send in
+    # Gmail or Outlook on the web, or in the computer's default mail app (mailto:).
+    email_compose: Literal["gmail", "outlook", "mail_app"] = "gmail"
+    imap_host: str = "imap.gmail.com"
+    imap_port: int = 993
+    imap_username: str = ""
+    imap_password: str = ""  # for Gmail, an app password
+    imap_drafts_folder: str = ""  # empty -> the folder the server marks as Drafts
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_security: Literal["starttls", "ssl", "none"] = "starttls"
+    smtp_username: str = ""
+    smtp_password: str = ""
+    smtp_from: str = ""  # defaults to smtp_username
+    # Workflows the assistant may trigger: JSON {"name": "webhook URL"}, e.g. n8n or Home Assistant.
+    # Only these URLs are ever called, and only after the user approves.
+    workflows: dict[str, str] = {}
+
+    # Phone notifications when a draft waits for review (they only remind; approval stays in the app).
+    notify_phone: str = Field(default="", pattern=r"^(\+[1-9]\d{6,14})?$")  # E.164, e.g. +84901234567
+    twilio_account_sid: str = ""
+    twilio_auth_token: str = ""
+    twilio_from: str = ""  # a Twilio number (+1...) or a Messaging Service SID (MG...)
+    ntfy_server: str = "https://ntfy.sh"
+    ntfy_topic: str = ""
+    ntfy_token: str = ""
+    notify_remind_minutes: int = Field(default=30, ge=0)  # remind again if still waiting; 0 = off
+    app_url: str = ""  # link added to notifications, e.g. http://192.168.1.10:8088
+
 
 @lru_cache
 def get_settings() -> Settings:

@@ -11,6 +11,7 @@ A private AI assistant that runs on your own computer. Type to it, talk to it, o
 - **Dictation**: the composer's mic button records a clip with MediaRecorder and transcribes it into the text box.
 - **Pictures**: attach up to 4 images per message (button, paste or drag and drop) and ask about them. Needs a vision model such as `gemma3:4b`, or Claude.
 - **Interrupt**: a Stop button, plus optional barge-in (talk over the assistant).
+- **Tasks with review**: draft an email, add an event to your schedule, compile a document (for example, notes from the current chat), or trigger a workflow webhook. The assistant only drafts. You get a notification, review and edit the draft, and nothing is sent, saved or run until you press **Approve**.
 - **Sessions**: create, rename and delete conversations. Voice turns go into the same history.
 - **Runtime settings**: switch provider, model, system prompt and temperature without restarting.
 
@@ -95,6 +96,25 @@ Open **http://localhost:5173**. Microphone access requires `localhost` or HTTPS.
 - **Text:** type and press Enter. Shift+Enter adds a new line. *Stop* aborts generation, and the partial reply is kept.
 - **Dictation:** click the mic inside the message box, speak, then click again. The text appears in the box for editing.
 - **Pictures:** click the picture button left of the message box, or paste or drop images onto it. They're resized to at most 1568 px in the browser and stored with the conversation. The default `llama3.2` is text-only, so pull a vision model first (`docker compose exec ollama ollama pull gemma3:4b`) and select it in Settings, or use Claude.
+- **Tasks:** click the lightning button left of the message box and pick a task, then describe it ("Email anna@example.com that I'll be 10 minutes late", "Dentist tomorrow at 3pm", "Summarize this chat as meeting notes"). The assistant drafts it into a review card:
+  - Edit any field, then press **Approve** to run it, or **Reject** to discard it.
+  - An approved email is saved to your **Gmail Drafts** if `IMAP_USERNAME` and `IMAP_PASSWORD` (a Gmail app password) are set: nothing is sent until you open it in Gmail and press Send. With SMTP settings it's sent directly instead. With neither, it opens in a new tab in Gmail's compose window (or Outlook.com, or your default mail program; see `EMAIL_COMPOSE`), filled in, so you can check it and press Send.
+  - Events go into **Upcoming** in the sidebar, with a reminder 10 minutes before. Each has an `.ics` file for your calendar app.
+  - Documents are saved and downloadable as Markdown.
+  - When a draft is ready you get an in-app alert, and a desktop notification if the tab is in the background (allow notifications when the browser asks). Chats with drafts waiting show an amber dot.
+  - **On your phone:** set `NOTIFY_PHONE` (SMS through Twilio) or `NTFY_TOPIC` (free push through the ntfy app) to get a text whenever a task needs review, and one more reminder if it's still waiting after `NOTIFY_REMIND_MINUTES`. The text names the task (for example *Email to anna@example.com: "Running late"*). It only reminds you; approving still happens in the app. Settings → *Notifications* has a **Send test notification** button.
+- **Notifications:** the bell in the header lists what happened, with an unread count, on every device that has the app open. New ones pop up live, and as a desktop notification when the tab is in the background. They also go to your phone (ntfy push or SMS, set up as above) for the categories you switch on in Settings → *Notifications*:
+
+  | When | Browser | Phone (default) |
+  |---|---|---|
+  | **New device sign-in:** a browser or phone opens the assistant for the first time (with its IP address) | ✓ | ✓ |
+  | **Rejected keys and tokens:** Claude's API key, the Gmail app password, the SMTP login or the Twilio/ntfy credentials are refused | ✓ | ✓ |
+  | **Tasks to review:** a drafted email or task waits for approval, plus one reminder | ✓ | ✓ |
+  | **Task results:** an approved task is done or failed | ✓ | |
+  | **Photo limit:** more than 4 pictures picked for one message | ✓ | |
+  | **Token limit:** a reply is cut off at `MAX_OUTPUT_TOKENS` | ✓ | |
+
+  The same problem within 10 minutes is reported once. The app has no accounts, so "sign-in" means a device it hasn't seen before; each browser keeps a random id in local storage, so a private window or cleared site data counts as a new device.
 - **Voice:** pick a mode in the voice bar, then click the round mic button.
   - *Push to talk:* hold the button, or hold **Space** when not typing.
   - *Hands-free:* just talk. A pause of about 0.8 s ends your turn.
@@ -121,6 +141,21 @@ All settings are environment variables. Put them in `.env`; Docker and the nativ
 | `ANTHROPIC_MODEL` | `claude-opus-5-5` | |
 | `ANTHROPIC_EFFORT` | `low` | `low`…`max`; low keeps voice latency down |
 | `MAX_HISTORY_MESSAGES` | `30` | Messages of context sent to the model |
+| `IMAP_USERNAME` / `IMAP_PASSWORD` | — | Your Gmail address and an [app password](https://myaccount.google.com/apppasswords): approved emails are saved to Gmail Drafts. Ignored when `SMTP_HOST` is set |
+| `IMAP_HOST` / `IMAP_PORT` | `imap.gmail.com` / `993` | For another provider's mailbox (SSL) |
+| `IMAP_DRAFTS_FOLDER` | auto | Drafts folder name, if the server doesn't mark one |
+| `EMAIL_COMPOSE` | `gmail` | Without SMTP, where an approved email opens ready to send: `gmail`, `outlook` (Outlook.com) or `mail_app` (default `mailto:` program) |
+| `SMTP_HOST` | — | Mail server that sends approved emails directly. Empty = save to Drafts (IMAP) or use `EMAIL_COMPOSE` |
+| `SMTP_PORT` / `SMTP_SECURITY` | `587` / `starttls` | `ssl` for port 465, `none` for a local relay |
+| `SMTP_USERNAME` / `SMTP_PASSWORD` | — | For Gmail, use an [app password](https://support.google.com/accounts/answer/185833) |
+| `SMTP_FROM` | `SMTP_USERNAME` | Sender address |
+| `NOTIFY_PHONE` | — | Your mobile number in international format (`+84901234567`) for SMS review reminders. Needs the three Twilio settings |
+| `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` | — | From the [Twilio console](https://console.twilio.com). A free trial can text your own verified number |
+| `TWILIO_FROM` | — | Your Twilio number (`+1…`) or a Messaging Service SID (`MG…`) |
+| `NTFY_TOPIC` | — | Free alternative: push through the [ntfy](https://ntfy.sh) app. Use a long, hard-to-guess topic, since anyone who knows it can read the messages. `NTFY_SERVER` (default `https://ntfy.sh`) and `NTFY_TOKEN` for a self-hosted or protected server |
+| `NOTIFY_REMIND_MINUTES` | `30` | Remind once more if a task is still waiting; `0` = off |
+| `APP_URL` | — | Link added to phone notifications, e.g. `http://192.168.1.10:8088` |
+| `WORKFLOWS` | `{}` | JSON `{"name": "webhook URL"}`. Approved runs POST `{"workflow", "input", "action_id"}` to that URL. Only listed URLs are ever called |
 | `STT_MODEL` | `base.en` | `tiny.en`, `small.en`, `medium.en`, or multilingual `base`, `small`, `large-v3`… |
 | `STT_LANGUAGE` | `en` | Empty = auto-detect (use a multilingual model) |
 | `STT_DEVICE` / `STT_COMPUTE_TYPE` | `cpu` / `int8` | Native: `cuda` / `float16` with CUDA 12 + cuDNN installed |

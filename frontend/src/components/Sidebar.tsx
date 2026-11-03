@@ -1,8 +1,10 @@
 import { useState } from "react";
 import type { HealthState } from "../hooks/useHealth";
+import { api } from "../lib/api";
+import { formatWhen } from "../lib/notify";
 import { PLAN_TEMPLATES, type PlanTemplate } from "../lib/plans";
-import type { Session } from "../lib/types";
-import { ChevronDownIcon, GearIcon, PencilIcon, PlusIcon, TrashIcon, XIcon } from "./icons";
+import type { CalendarEvent, Session } from "../lib/types";
+import { ChevronDownIcon, DownloadIcon, GearIcon, PencilIcon, PlusIcon, TrashIcon, XIcon } from "./icons";
 
 interface Props {
   sessions: Session[];
@@ -15,6 +17,10 @@ interface Props {
   onPlan: (plan: PlanTemplate) => void;
   /** A reply is streaming; a plan can't start until it ends. */
   busy: boolean;
+  /** Sessions with a drafted task waiting for review. */
+  needsReview: Set<string>;
+  events: CalendarEvent[];
+  onDeleteEvent: (id: string) => Promise<void>;
   onRename: (id: string, title: string) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
   onSettings: () => void;
@@ -54,12 +60,14 @@ export function Sidebar(props: Props) {
               key={s.id}
               session={s}
               active={s.id === activeId}
+              needsReview={props.needsReview.has(s.id)}
               onSelect={() => props.onSelect(s.id)}
               onRename={(t) => props.onRename(s.id, t)}
               onDelete={() => props.onDelete(s.id)}
             />
           ))}
         </nav>
+        {props.events.length > 0 && <Upcoming events={props.events} onDelete={props.onDeleteEvent} />}
         <div className="border-t border-slate-200 p-3 dark:border-slate-800">
           <div className="mb-2 space-y-1">
             <StatusDot label="Chat" status={health.chat} />
@@ -119,6 +127,43 @@ function PlanMenu({ onPick, busy }: { onPick: (plan: PlanTemplate) => void; busy
   );
 }
 
+function Upcoming({ events, onDelete }: { events: CalendarEvent[]; onDelete: (id: string) => Promise<void> }) {
+  return (
+    <section className="border-t border-slate-200 px-2 py-2 dark:border-slate-800" aria-label="Upcoming events">
+      <h2 className="px-3 pb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Upcoming</h2>
+      <ul className="max-h-40 space-y-0.5 overflow-y-auto">
+        {events.slice(0, 6).map((e) => (
+          <li key={e.id} className="group flex items-center rounded-lg px-3 py-1 text-sm hover:bg-slate-200/70 dark:hover:bg-slate-800">
+            <div className="min-w-0 flex-1">
+              <p className="truncate">{e.title}</p>
+              <p className="text-xs text-slate-500">{formatWhen(e.start)}</p>
+            </div>
+            <div className="flex shrink-0 opacity-0 group-hover:opacity-100 focus-within:opacity-100">
+              <a
+                href={api.chatUrl(`/api/events/${e.id}/ics`)}
+                className="rounded p-1 text-slate-500 hover:text-slate-900 dark:hover:text-white"
+                aria-label={`Add “${e.title}” to your calendar app`}
+                title="Add to calendar app (.ics)"
+              >
+                <DownloadIcon width={14} height={14} />
+              </a>
+              <button
+                className="rounded p-1 text-slate-500 hover:text-red-600"
+                onClick={() => {
+                  if (confirm(`Remove “${e.title}” from your schedule?`)) void onDelete(e.id);
+                }}
+                aria-label={`Remove “${e.title}”`}
+              >
+                <TrashIcon width={14} height={14} />
+              </button>
+            </div>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 function StatusDot({ label, status }: { label: string; status: { ok: boolean; detail: string } | null }) {
   const color = status === null ? "bg-slate-400" : status.ok ? "bg-emerald-500" : "bg-amber-500";
   return (
@@ -133,6 +178,7 @@ function StatusDot({ label, status }: { label: string; status: { ok: boolean; de
 function SessionRow(props: {
   session: Session;
   active: boolean;
+  needsReview: boolean;
   onSelect: () => void;
   onRename: (title: string) => Promise<void>;
   onDelete: () => Promise<void>;
@@ -172,8 +218,11 @@ function SessionRow(props: {
         props.active ? "bg-indigo-100 dark:bg-indigo-500/20" : "hover:bg-slate-200/70 dark:hover:bg-slate-800"
       }`}
     >
-      <button onClick={props.onSelect} className="min-w-0 flex-1 truncate px-3 py-2 text-left">
-        {props.session.title}
+      <button onClick={props.onSelect} className="flex min-w-0 flex-1 items-center gap-2 px-3 py-2 text-left">
+        <span className="truncate">{props.session.title}</span>
+        {props.needsReview && (
+          <span className="h-2 w-2 shrink-0 rounded-full bg-amber-500" title="A task is waiting for your review" />
+        )}
       </button>
       <div className="flex shrink-0 pr-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100">
         <button

@@ -2,21 +2,39 @@ import { useRef, useState } from "react";
 import { ClipRecorder } from "../audio/recorder";
 import { api } from "../lib/api";
 import { MAX_IMAGES, imageFiles, prepareImage, type PreparedImage } from "../lib/images";
-import { ImageIcon, MicIcon, SendIcon, StopIcon, XIcon } from "./icons";
+import { requestNotifyPermission } from "../lib/notify";
+import type { ActionKind, AutomationInfo } from "../lib/types";
+import { KIND_LABELS } from "./ActionCard";
+import { BoltIcon, ImageIcon, MicIcon, SendIcon, StopIcon, XIcon } from "./icons";
 
 interface Props {
   streaming: boolean;
+  /** A task is being drafted. */
+  drafting: boolean;
+  automation: AutomationInfo | null;
   onSend: (text: string, images: PreparedImage[]) => void;
+  onTask: (kind: ActionKind, instruction: string) => void;
   onStop: () => void;
   onError: (message: string) => void;
+  /** More pictures than a message can carry; `attempted` counts the ones already attached. */
+  onPhotoLimit: (attempted: number) => void;
 }
+
+const TASKS: { kind: ActionKind; label: string; placeholder: string }[] = [
+  { kind: "email", label: "Draft an email", placeholder: "Who is it to, and what should it say?" },
+  { kind: "event", label: "Add to my schedule", placeholder: "What, when and where? e.g. Dentist tomorrow at 3pm" },
+  { kind: "document", label: "Compile a document", placeholder: "What should it cover? e.g. Summarize this chat as meeting notes" },
+  { kind: "workflow", label: "Run a workflow", placeholder: "What should the workflow do?" },
+];
 
 /**
  * Text input with MediaRecorder dictation (speech is transcribed into the box, not sent)
  * and picture attachments (button, paste, or drag and drop).
  */
-export function Composer({ streaming, onSend, onStop, onError }: Props) {
+export function Composer({ streaming, drafting, automation, onSend, onTask, onStop, onError, onPhotoLimit }: Props) {
   const [text, setText] = useState("");
+  const [task, setTask] = useState<ActionKind | null>(null);
+  const [taskMenu, setTaskMenu] = useState(false);
   const [images, setImages] = useState<PreparedImage[]>([]);
   const [preparing, setPreparing] = useState(0);
   const [dragging, setDragging] = useState(false);
@@ -25,21 +43,30 @@ export function Composer({ streaming, onSend, onStop, onError }: Props) {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
-  const canSend = (text.trim() !== "" || images.length > 0) && preparing === 0;
+  const canSend = task
+    ? text.trim() !== "" && !drafting
+    : (text.trim() !== "" || images.length > 0) && preparing === 0 && !drafting;
+  const activeTask = TASKS.find((t) => t.kind === task);
   const imagesFull = images.length + preparing >= MAX_IMAGES;
 
   const submit = () => {
     if (!canSend || streaming) return;
-    onSend(text, images);
+    if (task) {
+      onTask(task, text);
+      setTask(null);
+    } else {
+      onSend(text, images);
+      setImages([]);
+    }
     setText("");
-    setImages([]);
   };
 
   const addImages = async (files: File[]) => {
     const picked = imageFiles(files);
     if (picked.length === 0) return;
+    if (task) return onError("Pictures can't be attached to a task. Cancel the task to send pictures.");
     const room = MAX_IMAGES - images.length - preparing;
-    if (picked.length > room) onError(`You can attach up to ${MAX_IMAGES} pictures per message.`);
+    if (picked.length > room) onPhotoLimit(MAX_IMAGES - room + picked.length);
     const accepted = picked.slice(0, Math.max(0, room));
     if (accepted.length === 0) return;
     setPreparing((n) => n + accepted.length);
@@ -102,6 +129,17 @@ export function Composer({ streaming, onSend, onStop, onError }: Props) {
           dragging ? "border-indigo-400 ring-2 ring-indigo-300/50" : "border-slate-300 dark:border-slate-700"
         }`}
       >
+        {activeTask && (
+          <div className="flex items-center gap-2 px-1 pt-1 text-xs">
+            <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 font-medium text-amber-900 dark:bg-amber-500/20 dark:text-amber-200">
+              <BoltIcon width={12} height={12} /> {activeTask.label}
+              <button onClick={() => setTask(null)} aria-label="Cancel task" className="ml-0.5 rounded-full hover:text-amber-700">
+                <XIcon width={12} height={12} />
+              </button>
+            </span>
+            <span className="text-slate-500">You'll review the draft before anything is sent or saved.</span>
+          </div>
+        )}
         {(images.length > 0 || preparing > 0) && (
           <div className="flex flex-wrap gap-2 px-1 pt-1">
             {images.map((img) => (
@@ -144,9 +182,50 @@ export function Composer({ streaming, onSend, onStop, onError }: Props) {
               e.target.value = ""; // allow picking the same file again
             }}
           />
+          <div className="relative" onKeyDown={(e) => e.key === "Escape" && setTaskMenu(false)}>
+            <button
+              onClick={() => setTaskMenu((o) => !o)}
+              aria-expanded={taskMenu}
+              aria-haspopup="menu"
+              title="Tasks: draft an email, schedule, document or workflow"
+              aria-label="Tasks"
+              className={`rounded-xl p-2.5 hover:bg-slate-100 dark:hover:bg-slate-800 ${task ? "text-amber-600" : "text-slate-500"}`}
+            >
+              <BoltIcon />
+            </button>
+            {taskMenu && (
+              <div
+                role="menu"
+                className="absolute bottom-full left-0 z-10 mb-2 w-64 rounded-xl border border-slate-200 bg-white p-1 shadow-lg dark:border-slate-700 dark:bg-slate-800"
+              >
+                {TASKS.map(({ kind, label }) => {
+                  const Icon = KIND_LABELS[kind].icon;
+                  const unavailable = kind === "workflow" && !automation?.workflows.length;
+                  return (
+                    <button
+                      key={kind}
+                      role="menuitem"
+                      disabled={unavailable}
+                      title={unavailable ? "Add WORKFLOWS to .env to enable (see the README)" : undefined}
+                      onClick={() => {
+                        setTask(kind);
+                        setTaskMenu(false);
+                        setImages([]);
+                        requestNotifyPermission();
+                        inputRef.current?.focus();
+                      }}
+                      className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm hover:bg-slate-100 disabled:opacity-40 disabled:hover:bg-transparent dark:hover:bg-slate-700"
+                    >
+                      <Icon width={16} height={16} /> {label}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
           <button
             onClick={() => fileRef.current?.click()}
-            disabled={imagesFull}
+            disabled={imagesFull || task !== null}
             title={imagesFull ? `Up to ${MAX_IMAGES} pictures per message` : "Attach pictures (or paste / drop them here)"}
             aria-label="Attach pictures"
             className="rounded-xl p-2.5 text-slate-500 hover:bg-slate-100 disabled:opacity-40 dark:hover:bg-slate-800"
@@ -173,7 +252,9 @@ export function Composer({ streaming, onSend, onStop, onError }: Props) {
             placeholder={
               dictation === "recording"
                 ? "Listening… click the mic again to finish"
-                : images.length > 0
+                : activeTask
+                  ? activeTask.placeholder
+                  : images.length > 0
                   ? "Ask about the picture…"
                   : "Message the assistant…"
             }
@@ -203,7 +284,7 @@ export function Composer({ streaming, onSend, onStop, onError }: Props) {
             <button
               onClick={submit}
               disabled={!canSend}
-              aria-label="Send"
+              aria-label={task ? "Draft task" : "Send"}
               className="rounded-xl bg-indigo-600 p-2.5 text-white hover:bg-indigo-500 disabled:opacity-40"
             >
               <SendIcon />

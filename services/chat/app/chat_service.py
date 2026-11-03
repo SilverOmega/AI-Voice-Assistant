@@ -8,17 +8,21 @@ from contextlib import aclosing
 from dataclasses import dataclass, field
 from typing import Any
 
+from .automation import clean_draft, draft_schema, draft_system_prompt
 from .config import Settings
 from .llm import (
+    TRUNCATED_NOTE,
     ChatTurn,
     GenerationParams,
     ImageData,
+    LLMAuthError,
     LLMError,
     ProviderRegistry,
     normalize_turns,
 )
+from .notifications import NotificationCenter
 from .repository import Repository
-from .schemas import MessageOut, RuntimeConfig, Source
+from .schemas import ActionOut, MessageOut, RuntimeConfig, Source
 
 log = logging.getLogger(__name__)
 
@@ -44,8 +48,10 @@ class ChatService:
         registry: ProviderRegistry,
         settings: Settings,
         runtime: RuntimeConfig,
+        notifications: NotificationCenter | None = None,
     ):
         self.repo = repo
+        self.notifications = notifications
         self.registry = registry
         self.settings = settings
         self.runtime = runtime
@@ -141,6 +147,8 @@ class ChatService:
                 async for text in stream:
                     parts.append(text)
                     yield ChatEvent("token", {"text": text})
+                    if text == TRUNCATED_NOTE:
+                        await self._notify_truncated(session_id, params.max_tokens)
             saved = await self._save(session_id, parts, source)
             log.info(
                 "turn complete session=%s provider=%s chars=%d secs=%.2f",
@@ -149,6 +157,8 @@ class ChatService:
             yield ChatEvent("done", {"message": saved.model_dump(mode="json") if saved else None})
         except LLMError as exc:
             saved = await self._save(session_id, parts, source)
+            if isinstance(exc, LLMAuthError):
+                await self._notify_rejected(exc, session_id)
             yield ChatEvent("error", {"message": str(exc)})
         except Exception:
             log.exception("unexpected error during chat turn")
@@ -171,6 +181,57 @@ class ChatService:
         msg = await self.repo.add_message(session_id, "assistant", text, source)
         parts.clear()
         return msg
+
+    async def draft_action(
+        self, session_id: str, kind: str, instruction: str, now: str
+    ) -> ActionOut:
+        """Have the model draft a task and store it for review. Nothing runs here."""
+        if await self.repo.get_session(session_id) is None:
+            raise SessionNotFound(session_id)
+        lock = self._lock_for(session_id)
+        if lock.locked():
+            raise SessionBusy(session_id)
+        async with lock:
+            history = await self.repo.list_messages(
+                session_id, limit=self.settings.max_history_messages
+            )
+            turns = normalize_turns(
+                [ChatTurn(m.role, m.content) for m in history if m.role in ("user", "assistant")]
+                + [ChatTurn("user", instruction)]
+            )
+            workflows = list(self.settings.workflows)
+            params = GenerationParams(
+                model=self.resolved_model(),
+                system=draft_system_prompt(kind, now, workflows),
+                temperature=0.2,
+                max_tokens=self.settings.max_output_tokens,
+            )
+            provider = self.registry.get(self.runtime.provider)
+            started = time.perf_counter()
+            try:
+                data = await provider.complete_json(turns, params, draft_schema(kind, workflows))
+            except LLMAuthError as exc:
+                await self._notify_rejected(exc, session_id)
+                raise
+            log.info("drafted %s action in %.1fs", kind, time.perf_counter() - started)
+            return await self.repo.add_action(session_id, kind, instruction, clean_draft(kind, data))
+
+    async def _notify_truncated(self, session_id: str, max_tokens: int) -> None:
+        if self.notifications:
+            await self.notifications.emit(
+                "token_limit",
+                "Reply cut off at the token limit",
+                f"The reply stopped at {max_tokens} tokens. Ask it to continue, or raise "
+                "MAX_OUTPUT_TOKENS in .env.",
+                level="warning",
+                session_id=session_id,
+            )
+
+    async def _notify_rejected(self, exc: LLMAuthError, session_id: str) -> None:
+        if self.notifications:
+            await self.notifications.emit(
+                "credentials", "API key rejected", str(exc), level="error", session_id=session_id
+            )
 
     async def reply(
         self,

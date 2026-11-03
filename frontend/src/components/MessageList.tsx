@@ -2,13 +2,30 @@ import { useEffect, useRef } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { api } from "../lib/api";
-import type { Message } from "../lib/types";
+import type { Action, AutomationInfo, Message } from "../lib/types";
+import { ActionCard, KIND_LABELS } from "./ActionCard";
 import { MicIcon } from "./icons";
 
-export function MessageList({ messages, emptyHint }: { messages: Message[]; emptyHint: string }) {
+interface Props {
+  messages: Message[];
+  actions: Action[];
+  automation: AutomationInfo | null;
+  onApprove: (id: string, payload: Record<string, unknown>) => Promise<unknown>;
+  onReject: (id: string) => Promise<void>;
+  emptyHint: string;
+}
+
+type Item = { at: string; message: Message } | { at: string; action: Action };
+
+export function MessageList({ messages, actions, automation, onApprove, onReject, emptyHint }: Props) {
   const endRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const last = messages[messages.length - 1];
+  const items: Item[] = [
+    ...messages.map((message) => ({ at: message.created_at, message })),
+    ...actions.map((action) => ({ at: action.created_at, action })),
+  ].sort((a, b) => a.at.localeCompare(b.at));
+  const lastAction = actions[actions.length - 1];
 
   // Follow the stream, but don't yank the view if the user scrolled up to read.
   useEffect(() => {
@@ -16,9 +33,9 @@ export function MessageList({ messages, emptyHint }: { messages: Message[]; empt
     if (!el) return;
     const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 160;
     if (nearBottom || last?.role === "user") endRef.current?.scrollIntoView({ block: "end" });
-  }, [messages.length, last?.content, last?.role]);
+  }, [messages.length, last?.content, last?.role, actions.length, lastAction?.status]);
 
-  if (messages.length === 0) {
+  if (items.length === 0) {
     return (
       <div className="flex flex-1 items-center justify-center p-8 text-center text-slate-500">
         <div>
@@ -32,9 +49,22 @@ export function MessageList({ messages, emptyHint }: { messages: Message[]; empt
   return (
     <div ref={containerRef} className="flex-1 overflow-y-auto" aria-live="polite">
       <div className="mx-auto max-w-3xl space-y-5 px-4 py-6">
-        {messages.map((m) => (
-          <MessageBubble key={m.id} message={m} />
-        ))}
+        {items.map((item) =>
+          "message" in item ? (
+            <MessageBubble key={item.message.id} message={item.message} />
+          ) : (
+            <div key={item.action.id} className="space-y-2">
+              <TaskRequest action={item.action} />
+              <ActionCard
+                key={`${item.action.id}:${item.action.status}`}
+                action={item.action}
+                info={automation}
+                onApprove={onApprove}
+                onReject={onReject}
+              />
+            </div>
+          ),
+        )}
         <div ref={endRef} />
       </div>
     </div>
@@ -74,6 +104,18 @@ function MessageBubble({ message }: { message: Message }) {
             {message.error}
           </p>
         )}
+      </div>
+    </div>
+  );
+}
+
+/** What the user asked for, shown like their message. */
+function TaskRequest({ action }: { action: Action }) {
+  return (
+    <div className="flex justify-end">
+      <div className="max-w-[85%] rounded-2xl bg-indigo-600 px-4 py-2.5 text-white">
+        <div className="mb-1 text-[11px] text-indigo-200">Task · {KIND_LABELS[action.kind].title.toLowerCase()}</div>
+        <p className="whitespace-pre-wrap break-words">{action.instruction}</p>
       </div>
     </div>
   );

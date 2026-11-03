@@ -1,5 +1,21 @@
 import { SseParser } from "./sse";
-import type { ChatConfig, ImageUpload, Message, ProviderName, Session, SessionDetail, Source } from "./types";
+import type {
+  Action,
+  ActionKind,
+  AppNotification,
+  AutomationInfo,
+  CalendarEvent,
+  ChannelPrefs,
+  ChatConfig,
+  ImageUpload,
+  Message,
+  NotificationCategory,
+  NotificationSettings,
+  ProviderName,
+  Session,
+  SessionDetail,
+  Source,
+} from "./types";
 
 export const CHAT_BASE = "/chat";
 export const VOICE_BASE = "/voice";
@@ -59,6 +75,51 @@ export const api = {
   listModels: () =>
     request<{ provider: string; default: string; models: string[] }>(`${CHAT_BASE}/api/models`),
   imageUrl: (id: string) => `${CHAT_BASE}/api/images/${id}`,
+  /** Links the chat service returns (downloads) are relative to it. */
+  chatUrl: (path: string) => `${CHAT_BASE}${path}`,
+
+  // ---- task automation: drafts run only through approveAction ---------
+  automationInfo: () => request<AutomationInfo>(`${CHAT_BASE}/api/automation`),
+  draftAction: (sessionId: string, kind: ActionKind, instruction: string, now: string) =>
+    request<Action>(`${CHAT_BASE}/api/sessions/${sessionId}/actions`, {
+      method: "POST",
+      body: JSON.stringify({ kind, instruction, now }),
+    }),
+  testNotification: () =>
+    request<{ channels: string[]; errors: string[] }>(`${CHAT_BASE}/api/notify/test`, { method: "POST" }),
+  pendingActions: () => request<Action[]>(`${CHAT_BASE}/api/actions?status=pending`),
+  notifications: () =>
+    request<{ items: AppNotification[]; unread: number }>(`${CHAT_BASE}/api/notifications`),
+  notificationStreamUrl: () => `${CHAT_BASE}/api/notifications/stream`,
+  markNotificationsRead: (ids?: string[]) =>
+    request<void>(`${CHAT_BASE}/api/notifications/read`, { method: "POST", body: JSON.stringify({ ids }) }),
+  clearNotifications: () => request<void>(`${CHAT_BASE}/api/notifications`, { method: "DELETE" }),
+  notificationSettings: () => request<NotificationSettings>(`${CHAT_BASE}/api/notifications/settings`),
+  updateNotificationSettings: (changes: Partial<Record<NotificationCategory, ChannelPrefs>>) =>
+    request<NotificationSettings>(`${CHAT_BASE}/api/notifications/settings`, {
+      method: "PUT",
+      body: JSON.stringify(changes),
+    }),
+  reportPhotoLimit: (count: number) =>
+    request<{ id: string | null }>(`${CHAT_BASE}/api/notifications/report`, {
+      method: "POST",
+      body: JSON.stringify({ category: "photo_limit", count }),
+    }),
+  deviceHello: (deviceId: string) =>
+    request<{ new: boolean }>(`${CHAT_BASE}/api/devices/hello`, {
+      method: "POST",
+      body: JSON.stringify({ device_id: deviceId }),
+    }),
+  approveAction: (id: string, payload: Record<string, unknown>) =>
+    request<Action>(`${CHAT_BASE}/api/actions/${id}/approve`, {
+      method: "POST",
+      body: JSON.stringify({ payload }),
+    }),
+  rejectAction: (id: string) =>
+    request<Action>(`${CHAT_BASE}/api/actions/${id}/reject`, { method: "POST" }),
+  listEvents: (since: string) =>
+    request<CalendarEvent[]>(`${CHAT_BASE}/api/events?since=${encodeURIComponent(since)}`),
+  deleteEvent: (id: string) => request<void>(`${CHAT_BASE}/api/events/${id}`, { method: "DELETE" }),
 
   // ---- voice / wake-word services --------------------------------------
   transcribe: async (audio: Blob): Promise<{ text: string; elapsed: number }> => {

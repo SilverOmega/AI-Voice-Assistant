@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, streamMessage } from "../lib/api";
 import type { PreparedImage } from "../lib/images";
+import { localNow } from "../lib/notify";
 import type { PlanTemplate } from "../lib/plans";
-import type { Message, Session, Source } from "../lib/types";
+import type { Action, ActionKind, Message, Session, Source } from "../lib/types";
 
 function localMessage(sessionId: string, role: "user" | "assistant", content: string, source: Source): Message {
   return {
@@ -16,16 +17,25 @@ function localMessage(sessionId: string, role: "user" | "assistant", content: st
   };
 }
 
-/** Sessions, the active conversation, and text + voice message streaming. */
-export function useChat() {
+interface Options {
+  /** A task was drafted, approved or rejected (for notifications and the schedule). */
+  onActionChange?: (action: Action) => void;
+}
+
+/** Sessions, the active conversation, text + voice message streaming, and task drafts. */
+export function useChat({ onActionChange }: Options = {}) {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
+  const [actions, setActions] = useState<Action[]>([]);
+  const [drafting, setDrafting] = useState(false);
   const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const activeIdRef = useRef<string | null>(null);
   activeIdRef.current = activeId;
+  const onActionChangeRef = useRef(onActionChange);
+  onActionChangeRef.current = onActionChange;
 
   const refreshSessions = useCallback(async () => {
     try {
@@ -38,7 +48,10 @@ export function useChat() {
   const loadSession = useCallback(async (id: string) => {
     try {
       const detail = await api.getSession(id);
-      if (activeIdRef.current === id) setMessages(detail.messages);
+      if (activeIdRef.current === id) {
+        setMessages(detail.messages);
+        setActions(detail.actions ?? []);
+      }
     } catch (err) {
       setError((err as Error).message);
     }
@@ -54,6 +67,7 @@ export function useChat() {
       activeIdRef.current = id;
       setActiveId(id);
       setMessages([]);
+      setActions([]);
       setError(null);
       if (id) void loadSession(id);
     },
@@ -139,6 +153,71 @@ export function useChat() {
 
   const stop = useCallback(() => abortRef.current?.abort(), []);
 
+  // ---- tasks: the model drafts, the user reviews, the server runs it on approval --
+
+  const replaceAction = (id: string, next: Action | null) =>
+    setActions((list) => (next ? list.map((a) => (a.id === id ? next : a)) : list.filter((a) => a.id !== id)));
+
+  const draftTask = useCallback(
+    async (kind: ActionKind, text: string) => {
+      const instruction = text.trim();
+      if (!instruction || streaming || drafting) return;
+      setError(null);
+      setDrafting(true);
+      const placeholderId = `local-${crypto.randomUUID()}`;
+      try {
+        const sessionId = await ensureSession();
+        const now = new Date().toISOString();
+        setActions((list) => [
+          ...list,
+          {
+            id: placeholderId,
+            session_id: sessionId,
+            kind,
+            status: "drafting",
+            instruction,
+            payload: {},
+            result: null,
+            error: null,
+            created_at: now,
+            updated_at: now,
+          },
+        ]);
+        const action = await api.draftAction(sessionId, kind, instruction, localNow());
+        if (activeIdRef.current === sessionId) replaceAction(placeholderId, action);
+        onActionChangeRef.current?.(action);
+        void refreshSessions();
+      } catch (err) {
+        replaceAction(placeholderId, null);
+        setError(`Couldn't draft that: ${(err as Error).message}`);
+      } finally {
+        setDrafting(false);
+      }
+    },
+    [streaming, drafting, ensureSession, refreshSessions],
+  );
+
+  /** Runs the action with the user's edits. Throws (for the card to show) if it is invalid. */
+  const approveAction = useCallback(async (id: string, payload: Record<string, unknown>) => {
+    const action = await api.approveAction(id, payload);
+    replaceAction(id, action);
+    onActionChangeRef.current?.(action);
+    const url = action.status === "done" ? action.result?.open_url : undefined;
+    if (url?.startsWith("mailto:")) window.location.href = url;
+    else if (url) {
+      // Gmail / Outlook compose in a new tab. If the browser blocks it, the card keeps the link.
+      const tab = window.open(url, "_blank");
+      if (tab) tab.opener = null;
+    }
+    return action;
+  }, []);
+
+  const rejectAction = useCallback(async (id: string) => {
+    const action = await api.rejectAction(id);
+    replaceAction(id, action);
+    onActionChangeRef.current?.(action);
+  }, []);
+
   /** Opens a new chat named after the plan and asks the assistant to help build it. */
   const startPlan = useCallback(
     (plan: PlanTemplate) => {
@@ -184,6 +263,8 @@ export function useChat() {
     sessions,
     activeId,
     messages,
+    actions,
+    drafting,
     streaming,
     error,
     setError,
@@ -194,6 +275,9 @@ export function useChat() {
     send,
     stop,
     startPlan,
+    draftTask,
+    approveAction,
+    rejectAction,
     voice,
   };
 }

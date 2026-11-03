@@ -2,14 +2,25 @@
 
 from ..config import ProviderName, Settings
 from .anthropic_provider import AnthropicProvider
-from .base import ChatTurn, GenerationParams, ImageData, LLMError, LLMProvider, normalize_turns
+from .base import (
+    TRUNCATED_NOTE,
+    ChatTurn,
+    GenerationParams,
+    ImageData,
+    LLMAuthError,
+    LLMError,
+    LLMProvider,
+    normalize_turns,
+)
 from .echo import EchoProvider
 from .ollama import OllamaProvider
 
 __all__ = [
+    "TRUNCATED_NOTE",
     "ChatTurn",
     "GenerationParams",
     "ImageData",
+    "LLMAuthError",
     "LLMError",
     "LLMProvider",
     "ProviderRegistry",

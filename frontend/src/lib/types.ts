@@ -37,6 +37,78 @@ export interface Session {
 
 export interface SessionDetail extends Session {
   messages: Message[];
+  actions: Action[];
+}
+
+// ---- task automation --------------------------------------------------------
+
+export type ActionKind = "email" | "event" | "document" | "workflow";
+/** "drafting" is client-only: the model is still writing the draft. */
+export type ActionStatus = "drafting" | "pending" | "running" | "done" | "rejected";
+
+export interface EmailPayload {
+  to: string[];
+  cc: string[];
+  subject: string;
+  body: string;
+}
+export interface EventPayload {
+  title: string;
+  /** Local time, YYYY-MM-DDTHH:MM */
+  start: string;
+  end: string;
+  location: string;
+  notes: string;
+}
+export interface DocumentPayload {
+  title: string;
+  content: string;
+}
+export interface WorkflowPayload {
+  workflow: string;
+  input: string;
+}
+export type ActionPayload = EmailPayload | EventPayload | DocumentPayload | WorkflowPayload;
+
+/** Something the assistant drafted. It runs only after the user approves it. */
+export interface Action {
+  id: string;
+  session_id: string;
+  kind: ActionKind;
+  status: ActionStatus;
+  instruction: string;
+  payload: Record<string, unknown>;
+  result: {
+    message: string;
+    /** Opened right after approval: a compose window with the email filled in. */
+    open_url?: string;
+    /** The same email in each place the user might write mail: gmail | outlook | mail_app. */
+    compose_urls?: Record<string, string>;
+    drafts_url?: string;
+    download_url?: string;
+    event_id?: string;
+  } | null;
+  error: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CalendarEvent {
+  id: string;
+  action_id: string | null;
+  title: string;
+  start: string;
+  end: string;
+  location: string;
+  notes: string;
+}
+
+export interface AutomationInfo {
+  email_delivery: "smtp" | "drafts" | "gmail" | "outlook" | "mail_app";
+  workflows: string[];
+  /** Where phone review reminders go, e.g. "SMS to +84••••••567"; empty = off. */
+  notify_channels: string[];
+  notify_remind_minutes: number;
 }
 
 export type ProviderName = "ollama" | "anthropic" | "echo";
@@ -97,3 +169,35 @@ export type WakeServerMessage =
   | { type: "wake"; model: string; score: number }
   | { type: "score"; score: number }
   | { type: "error"; message: string };
+
+// ---- notifications ------------------------------------------------------------
+
+export type NotificationCategory = "sign_in" | "credentials" | "review" | "task" | "photo_limit" | "token_limit";
+
+export interface AppNotification {
+  id: string;
+  category: NotificationCategory;
+  level: "info" | "warning" | "error";
+  title: string;
+  body: string;
+  /** The chat it's about, if any. */
+  session_id: string | null;
+  created_at: string;
+  read: boolean;
+}
+
+/** As streamed live: whether this category pops up in the browser. */
+export interface LiveNotification extends AppNotification {
+  popup: boolean;
+}
+
+export interface ChannelPrefs {
+  web: boolean;
+  phone: boolean;
+}
+
+export interface NotificationSettings {
+  categories: (ChannelPrefs & { id: NotificationCategory; label: string; description: string })[];
+  /** e.g. ["ntfy push"]; empty = no phone channel set up. */
+  phone_channels: string[];
+}

@@ -5,7 +5,15 @@ from collections.abc import AsyncIterator
 
 import httpx
 
-from .base import ChatTurn, GenerationParams, LLMError, LLMProvider, last_user_images
+from .base import (
+    TRUNCATED_NOTE,
+    ChatTurn,
+    GenerationParams,
+    LLMError,
+    LLMProvider,
+    last_user_images,
+    parse_json_object,
+)
 
 
 class OllamaProvider(LLMProvider):
@@ -77,6 +85,8 @@ class OllamaProvider(LLMProvider):
                     if text:
                         yield text
                     if chunk.get("done"):
+                        if chunk.get("done_reason") == "length":
+                            yield TRUNCATED_NOTE
                         break
         except httpx.ConnectError as exc:
             raise LLMError(
@@ -84,6 +94,36 @@ class OllamaProvider(LLMProvider):
             ) from exc
         except httpx.TimeoutException as exc:
             raise LLMError("Ollama timed out while generating a response.") from exc
+
+    async def complete_json(self, turns, params, schema):
+        # Ollama constrains generation to the schema, so even small models return valid JSON.
+        messages = [{"role": "system", "content": params.system}] if params.system else []
+        messages += [{"role": t.role, "content": t.content} for t in turns]
+        body = {
+            "model": params.model,
+            "messages": messages,
+            "stream": False,
+            "format": schema,
+            "keep_alive": self.keep_alive,
+            "options": {
+                **self._load_options(),
+                "temperature": params.temperature,
+                "num_predict": params.max_tokens,
+            },
+        }
+        try:
+            resp = await self._client.post(f"{self._base_url}/api/chat", json=body)
+        except httpx.ConnectError as exc:
+            raise LLMError(f"Cannot reach Ollama at {self._base_url}. Is it running? ({exc})") from exc
+        except httpx.TimeoutException as exc:
+            raise LLMError("Ollama timed out while drafting.") from exc
+        if resp.status_code == 404:
+            raise LLMError(
+                f"Ollama model '{params.model}' is not available. Run: ollama pull {params.model}"
+            )
+        if resp.status_code >= 400:
+            raise LLMError(f"Ollama error {resp.status_code}: {resp.text[:300]}")
+        return parse_json_object(resp.json().get("message", {}).get("content", ""))
 
     async def list_models(self) -> list[str]:
         resp = await self._client.get(f"{self._base_url}/api/tags", timeout=5.0)

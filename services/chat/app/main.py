@@ -1,14 +1,18 @@
 """Chat service: sessions, history and streaming LLM replies."""
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from .automation import Automation
 from .chat_service import ChatService
 from .config import Settings, get_settings
 from .llm import ProviderRegistry
+from .notifications import NotificationCenter
+from .notifier import Notifier
 from .repository import Repository
 from .routes import router
 from .schemas import RuntimeConfig
@@ -32,12 +36,22 @@ def create_app(
             system_prompt=settings.system_prompt,
             temperature=settings.temperature,
         )
-        app.state.chat = ChatService(repo, providers, settings, runtime)
+        app.state.notifier = Notifier(settings)
+        app.state.notifications = NotificationCenter(repo, app.state.notifier)
+        app.state.chat = ChatService(repo, providers, settings, runtime, app.state.notifications)
         app.state.chat.start_warm_up()
+        app.state.automation = Automation(repo, settings)
+        reminders = asyncio.create_task(
+            app.state.notifications.remind_loop(settings.notify_remind_minutes)
+        )
         app.state.health_cache = {}
         try:
             yield
         finally:
+            reminders.cancel()
+            await app.state.notifications.aclose()
+            await app.state.notifier.aclose()
+            await app.state.automation.aclose()
             await app.state.chat.aclose()
             await providers.aclose()
             await repo.close()

@@ -3,7 +3,7 @@
 import binascii
 from base64 import b64decode
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, PrivateAttr, model_validator
 
@@ -66,6 +66,7 @@ class SessionOut(BaseModel):
 
 class SessionDetail(SessionOut):
     messages: list[MessageOut] = []
+    actions: list["ActionOut"] = []
 
 
 class SessionCreate(BaseModel):
@@ -121,3 +122,145 @@ class HealthOut(BaseModel):
     model: str
     provider_ok: bool
     detail: str = ""
+
+
+# ---- task automation ------------------------------------------------------------
+
+ActionKind = Literal["email", "event", "document", "workflow"]
+ActionStatus = Literal["pending", "running", "done", "rejected"]
+
+
+# Drafts are lenient: the model may leave fields empty for the user to fill in on review.
+# Strict checks run when the user approves (see automation.validate_payload).
+class EmailDraft(BaseModel):
+    to: list[str] = Field(default=[], description="Recipient email addresses")
+    cc: list[str] = []
+    subject: str = ""
+    body: str = Field(default="", description="Plain-text email body, signed off by the user")
+
+
+class EventDraft(BaseModel):
+    title: str = ""
+    start: str = Field(default="", description="Local start time, YYYY-MM-DDTHH:MM")
+    end: str = Field(default="", description="Local end time, YYYY-MM-DDTHH:MM, or empty")
+    location: str = ""
+    notes: str = ""
+
+
+class DocumentDraft(BaseModel):
+    title: str = ""
+    content: str = Field(default="", description="The document in Markdown")
+
+
+class WorkflowDraft(BaseModel):
+    workflow: str = Field(default="", description="Name of the workflow to run")
+    input: str = Field(default="", description="What the workflow should do or act on")
+
+
+DRAFT_MODELS: dict[str, type[BaseModel]] = {
+    "email": EmailDraft,
+    "event": EventDraft,
+    "document": DocumentDraft,
+    "workflow": WorkflowDraft,
+}
+
+
+class ActionDraftRequest(BaseModel):
+    kind: ActionKind
+    instruction: str = Field(min_length=1, max_length=8_000)
+    # The user's local time, so "tomorrow at 3pm" resolves correctly.
+    now: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}")
+
+
+class ActionApprove(BaseModel):
+    payload: dict[str, Any]  # the draft as the user edited it
+
+
+class ActionOut(BaseModel):
+    id: str
+    session_id: str
+    kind: ActionKind
+    status: ActionStatus
+    instruction: str
+    payload: dict[str, Any]
+    # After it runs: {"message": ..., and optionally "open_url" / "download_url"}
+    result: dict[str, Any] | None = None
+    error: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class EventOut(BaseModel):
+    id: str
+    action_id: str | None
+    title: str
+    start: str
+    end: str
+    location: str
+    notes: str
+
+
+class AutomationInfo(BaseModel):
+    email_delivery: Literal["smtp", "drafts", "gmail", "outlook", "mail_app"]
+    workflows: list[str]
+    # Where review reminders go, e.g. ["SMS to +84•••••567"]; empty = phone notifications off.
+    notify_channels: list[str] = []
+    notify_remind_minutes: int = 0
+
+
+class NotifyTestOut(BaseModel):
+    channels: list[str]
+    errors: list[str]
+
+
+# ---- notifications --------------------------------------------------------------
+
+NotificationCategory = Literal["sign_in", "credentials", "review", "task", "photo_limit", "token_limit"]
+NotificationLevel = Literal["info", "warning", "error"]
+
+
+class NotificationOut(BaseModel):
+    id: str
+    category: NotificationCategory
+    level: NotificationLevel
+    title: str
+    body: str
+    session_id: str | None = None  # the chat it's about, if any
+    created_at: datetime
+    read: bool = False
+
+
+class NotificationList(BaseModel):
+    items: list[NotificationOut]
+    unread: int
+
+
+class ChannelPrefs(BaseModel):
+    web: bool  # pop-up and desktop notification in open browsers (the bell list always keeps it)
+    phone: bool  # ntfy push / SMS, when a phone channel is set up
+
+
+class NotificationCategoryOut(ChannelPrefs):
+    id: NotificationCategory
+    label: str
+    description: str
+
+
+class NotificationSettings(BaseModel):
+    categories: list[NotificationCategoryOut]
+    phone_channels: list[str]  # e.g. ["ntfy push"]; empty = no phone channel set up
+
+
+class NotificationRead(BaseModel):
+    ids: list[str] | None = Field(default=None, max_length=500)  # None = all
+
+
+class NotificationReport(BaseModel):
+    """Events only the browser sees. The server writes the text, not the client."""
+
+    category: Literal["photo_limit"]
+    count: int = Field(ge=0, le=1000)
+
+
+class DeviceHello(BaseModel):
+    device_id: str = Field(pattern=r"^[A-Za-z0-9-]{8,64}$")

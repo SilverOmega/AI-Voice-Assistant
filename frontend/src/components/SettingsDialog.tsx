@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
-import type { ChatConfig, ProviderName, VoicePrefs } from "../lib/types";
+import type { AutomationInfo, ChannelPrefs, ChatConfig, NotificationSettings, ProviderName, VoicePrefs } from "../lib/types";
 import { XIcon } from "./icons";
 
 interface Props {
@@ -23,6 +23,9 @@ export function SettingsDialog({ open, onClose, prefs, onPrefs }: Props) {
   const [wakeModels, setWakeModels] = useState<string[]>([]);
   const [status, setStatus] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [automation, setAutomation] = useState<AutomationInfo | null>(null);
+  const [phoneTest, setPhoneTest] = useState<string | null>(null);
+  const [notify, setNotify] = useState<NotificationSettings | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -36,6 +39,9 @@ export function SettingsDialog({ open, onClose, prefs, onPrefs }: Props) {
       .catch((e) => setStatus(`Could not load chat settings: ${e.message}`));
     api.listModels().then((m) => setModels(m.models)).catch(() => setModels([]));
     api.wakeModels().then((m) => setWakeModels(m.models)).catch(() => setWakeModels([]));
+    api.automationInfo().then(setAutomation, () => setAutomation(null));
+    api.notificationSettings().then(setNotify, () => setNotify(null));
+    setPhoneTest(null);
   }, [open]);
 
   useEffect(() => {
@@ -46,6 +52,25 @@ export function SettingsDialog({ open, onClose, prefs, onPrefs }: Props) {
   }, [open, onClose]);
 
   if (!open) return null;
+
+  const testPhone = async () => {
+    setPhoneTest("Sending…");
+    try {
+      const { errors } = await api.testNotification();
+      setPhoneTest(errors.length ? errors.join(" ") : "Sent. Check your phone.");
+    } catch (err) {
+      setPhoneTest((err as Error).message);
+    }
+  };
+
+  const setChannel = async (id: string, prefs: ChannelPrefs) => {
+    setNotify((n) => n && { ...n, categories: n.categories.map((c) => (c.id === id ? { ...c, ...prefs } : c)) });
+    try {
+      setNotify(await api.updateNotificationSettings({ [id]: prefs }));
+    } catch (err) {
+      setStatus(`Could not save notification settings: ${(err as Error).message}`);
+    }
+  };
 
   const save = async () => {
     setSaving(true);
@@ -214,6 +239,79 @@ export function SettingsDialog({ open, onClose, prefs, onPrefs }: Props) {
                 How long to keep listening for a follow-up before waiting for the wake word again.
               </span>
             </label>
+          </section>
+
+          <section className="space-y-2">
+            <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">Notifications</h3>
+            <p className="text-xs text-slate-500">
+              Every notification is kept under the bell. <strong>Browser</strong> also pops it up in open tabs (and on
+              the desktop when the tab is in the background); <strong>Phone</strong> sends it to your phone.
+            </p>
+            {notify && (
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-xs text-slate-500">
+                    <th className="pb-1 text-left font-medium">When</th>
+                    <th className="w-16 pb-1 font-medium">Browser</th>
+                    <th className="w-16 pb-1 font-medium">Phone</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {notify.categories.map((c) => (
+                    <tr key={c.id} className="border-t border-slate-100 dark:border-slate-800">
+                      <td className="py-1.5 pr-2">
+                        {c.label}
+                        <span className="block text-xs text-slate-500">{c.description}</span>
+                      </td>
+                      <td className="text-center">
+                        <input
+                          type="checkbox"
+                          aria-label={`${c.label} in the browser`}
+                          checked={c.web}
+                          onChange={(e) => void setChannel(c.id, { web: e.target.checked, phone: c.phone })}
+                          className="accent-indigo-600"
+                        />
+                      </td>
+                      <td className="text-center">
+                        <input
+                          type="checkbox"
+                          aria-label={`${c.label} on the phone`}
+                          checked={c.phone}
+                          disabled={notify.phone_channels.length === 0}
+                          onChange={(e) => void setChannel(c.id, { web: c.web, phone: e.target.checked })}
+                          className="accent-indigo-600 disabled:opacity-40"
+                        />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+            {automation?.notify_channels.length ? (
+              <>
+                <p className="text-sm">
+                  Phone notifications go to: <strong>{automation.notify_channels.join(" and ")}</strong>.
+                  {automation.notify_remind_minutes > 0 &&
+                    ` A task still waiting for review after ${automation.notify_remind_minutes} minutes gets one more reminder.`}
+                </p>
+                <p className="text-xs text-slate-500">They only inform you. Approving still happens here, so nothing is sent from your phone.</p>
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={testPhone}
+                    className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm hover:bg-slate-100 dark:border-slate-700 dark:hover:bg-slate-800"
+                  >
+                    Send test notification
+                  </button>
+                  {phoneTest && <span className="text-sm text-slate-600 dark:text-slate-400">{phoneTest}</span>}
+                </div>
+              </>
+            ) : (
+              <p className="text-sm text-slate-600 dark:text-slate-400">
+                Phone is off. For free push notifications, install the ntfy app and set <code>NTFY_TOPIC</code> in{" "}
+                <code>.env</code>; for text messages, set <code>NOTIFY_PHONE</code> and the Twilio settings. Then restart.
+                See the README.
+              </p>
+            )}
           </section>
         </div>
       </div>
