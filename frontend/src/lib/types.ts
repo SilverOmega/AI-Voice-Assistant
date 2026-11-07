@@ -14,6 +14,7 @@ export interface Message {
   source: Source;
   created_at: string;
   images?: ImageRef[];
+  files?: FileRef[];
   /** Client-only: message is still streaming or not yet persisted. */
   pending?: boolean;
   /** Client-only: data: URLs of images attached to a message that is not yet persisted. */
@@ -200,4 +201,30 @@ export interface NotificationSettings {
   categories: (ChannelPrefs & { id: NotificationCategory; label: string; description: string })[];
   /** e.g. ["ntfy push"]; empty = no phone channel set up. */
   phone_channels: string[];
+}
+
+export interface AuthStatus {
+  /** Reached over the network (HTTPS port), not from the computer running the assistant. */
+  remote: boolean;
+  /** APP_PASSCODE is set, so other devices can sign in. */
+  configured: boolean;
+  signed_in: boolean;
+  /** The address other devices open (APP_URL), or "". */
+  app_url: string;
+}
+
+/** A document attached to a message. */
+export interface FileRef {
+  id: string;
+  name: string;
+  media_type: string;
+  size: number;
+}
+
+/** A document uploaded and read by the server, waiting to be sent. */
+export interface UploadedFile extends FileRef {
+  /** Characters of text read from it. */
+  chars: number;
+  /** PDF pages, slides or sheets. */
+  pages: number | null;
 }

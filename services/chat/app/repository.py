@@ -3,7 +3,7 @@
 import json
 import uuid
 from collections.abc import Sequence
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +13,8 @@ from .llm.base import ImageData
 from .schemas import (
     ActionOut,
     EventOut,
+    FileOut,
+    FileRef,
     ImageRef,
     MessageOut,
     NotificationOut,
@@ -46,6 +48,20 @@ CREATE TABLE IF NOT EXISTS images (
     data BLOB NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_images_message ON images(message_id, position);
+-- Documents: uploaded first (message_id NULL), then attached when the message is sent.
+CREATE TABLE IF NOT EXISTS files (
+    id TEXT PRIMARY KEY,
+    message_id TEXT REFERENCES messages(id) ON DELETE CASCADE,
+    position INTEGER NOT NULL DEFAULT 0,
+    name TEXT NOT NULL,
+    media_type TEXT NOT NULL,
+    size INTEGER NOT NULL,
+    pages INTEGER,
+    text TEXT NOT NULL,
+    data BLOB NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_files_message ON files(message_id, position);
 CREATE TABLE IF NOT EXISTS actions (
     id TEXT PRIMARY KEY,
     session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
@@ -222,7 +238,9 @@ class Repository:
         content: str,
         source: Source = "text",
         images: Sequence[ImageData] = (),
+        files: Sequence[FileRef] = (),
     ) -> MessageOut:
+        """Store a message. `files` were uploaded with add_file and are attached to it here."""
         now = _now()
         mid = _new_id()
         await self.db.execute(
@@ -235,11 +253,16 @@ class Repository:
             "INSERT INTO images (id, message_id, position, media_type, data) VALUES (?, ?, ?, ?, ?)",
             [(ref.id, mid, i, img.media_type, img.data) for i, (ref, img) in enumerate(zip(refs, images))],
         )
+        await self.db.executemany(
+            "UPDATE files SET message_id = ?, position = ? WHERE id = ? AND message_id IS NULL",
+            [(mid, i, f.id) for i, f in enumerate(files)],
+        )
         # Auto-title a fresh session from its first user message.
         if role == "user":
+            fallback = _title_from(files[0].name) if files else "Image"
             await self.db.execute(
                 "UPDATE sessions SET title = ? WHERE id = ? AND title = ?",
-                (_title_from(content) or "Image", session_id, DEFAULT_TITLE),
+                (_title_from(content) or fallback, session_id, DEFAULT_TITLE),
             )
         await self.db.execute("UPDATE sessions SET updated_at = ? WHERE id = ?", (now, session_id))
         await self.db.commit()
@@ -251,6 +274,7 @@ class Repository:
             source=source,
             created_at=now,
             images=refs,
+            files=list(files),
         )
 
     async def list_messages(self, session_id: str, limit: int | None = None) -> list[MessageOut]:
@@ -279,7 +303,21 @@ class Repository:
                 refs.setdefault(img["message_id"], []).append(
                     ImageRef(id=img["id"], media_type=img["media_type"])
                 )
-        return [MessageOut(**dict(row), images=refs.get(row["id"], [])) for row in rows]
+        files: dict[str, list[FileRef]] = {}
+        if ids:
+            cursor = await self.db.execute(
+                f"SELECT id, message_id, name, media_type, size FROM files "
+                f"WHERE message_id IN ({','.join('?' * len(ids))}) ORDER BY position",
+                ids,
+            )
+            for f in await cursor.fetchall():
+                files.setdefault(f["message_id"], []).append(
+                    FileRef(id=f["id"], name=f["name"], media_type=f["media_type"], size=f["size"])
+                )
+        return [
+            MessageOut(**dict(row), images=refs.get(row["id"], []), files=files.get(row["id"], []))
+            for row in rows
+        ]
 
     async def image_data(self, message_ids: Sequence[str]) -> dict[str, list[ImageData]]:
         """The stored images of these messages, in order, for sending to the model."""
@@ -301,6 +339,70 @@ class Repository:
         )
         row = await cursor.fetchone()
         return ImageData(row["media_type"], row["data"]) if row else None
+
+    # ---- documents ------------------------------------------------------
+
+    async def add_file(
+        self, name: str, media_type: str, data: bytes, text: str, pages: int | None
+    ) -> FileOut:
+        """Store an uploaded document until it's sent with a message."""
+        now = datetime.now(timezone.utc)
+        # Uploaded but never sent (the tab was closed): gone after a day.
+        await self.db.execute(
+            "DELETE FROM files WHERE message_id IS NULL AND created_at < ?",
+            ((now - timedelta(days=1)).isoformat(),),
+        )
+        out = FileOut(
+            id=_new_id(), name=name, media_type=media_type, size=len(data), chars=len(text), pages=pages
+        )
+        await self.db.execute(
+            "INSERT INTO files (id, name, media_type, size, pages, text, data, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (out.id, name, media_type, out.size, pages, text, data, now.isoformat()),
+        )
+        await self.db.commit()
+        return out
+
+    async def unsent_files(self, ids: Sequence[str]) -> list[FileRef] | None:
+        """These uploaded documents, in this order; None if any is unknown or already sent."""
+        if not ids:
+            return []
+        cursor = await self.db.execute(
+            f"SELECT id, name, media_type, size FROM files "
+            f"WHERE message_id IS NULL AND id IN ({','.join('?' * len(ids))})",
+            list(ids),
+        )
+        found = {row["id"]: FileRef(**dict(row)) for row in await cursor.fetchall()}
+        if len(found) != len(set(ids)):
+            return None
+        return [found[i] for i in dict.fromkeys(ids)]
+
+    async def file_texts(self, message_ids: Sequence[str]) -> dict[str, list[tuple[str, str]]]:
+        """(name, text) of the documents attached to these messages, for the model."""
+        if not message_ids:
+            return {}
+        cursor = await self.db.execute(
+            f"SELECT message_id, name, text FROM files "
+            f"WHERE message_id IN ({','.join('?' * len(message_ids))}) ORDER BY position",
+            list(message_ids),
+        )
+        out: dict[str, list[tuple[str, str]]] = {}
+        for row in await cursor.fetchall():
+            out.setdefault(row["message_id"], []).append((row["name"], row["text"]))
+        return out
+
+    async def get_file(self, file_id: str) -> tuple[str, str, bytes] | None:
+        """(name, media type, bytes) of a document."""
+        cursor = await self.db.execute("SELECT name, media_type, data FROM files WHERE id = ?", (file_id,))
+        row = await cursor.fetchone()
+        return (row["name"], row["media_type"], row["data"]) if row else None
+
+    async def delete_unsent_file(self, file_id: str) -> bool:
+        cursor = await self.db.execute(
+            "DELETE FROM files WHERE id = ? AND message_id IS NULL", (file_id,)
+        )
+        await self.db.commit()
+        return cursor.rowcount > 0
 
     # ---- actions --------------------------------------------------------
 

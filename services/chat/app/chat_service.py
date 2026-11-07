@@ -1,6 +1,7 @@
 """Orchestrates a chat turn: persist the user message, stream the model reply, persist the reply."""
 
 import asyncio
+import html
 import logging
 import time
 from collections.abc import AsyncIterator, Sequence
@@ -22,9 +23,34 @@ from .llm import (
 )
 from .notifications import NotificationCenter
 from .repository import Repository
-from .schemas import ActionOut, MessageOut, RuntimeConfig, Source
+from .schemas import ActionOut, FileRef, MessageOut, RuntimeConfig, Source
 
 log = logging.getLogger(__name__)
+
+
+def with_documents(content: str, documents: Sequence[tuple[str, str]], budget: int) -> tuple[str, int]:
+    """A user message with its attached documents in front of it, and the budget left.
+
+    Documents come first and the question last: models answer long documents best that way.
+    `budget` is how many characters of document text may still be sent with this request.
+    """
+    if not documents:
+        return content, budget
+    blocks = []
+    for name, text in documents:
+        taken = text[: max(budget, 0)]
+        budget -= len(taken)
+        if not taken:
+            body = "[Not included: newer documents in this chat use up the room. Attach it again to ask about it.]"
+        elif len(taken) < len(text):
+            body = (
+                f"{taken}\n[Cut here: the remaining {len(text) - len(taken):,} characters don't fit. "
+                "Ask about a specific part, or attach a shorter excerpt.]"
+            )
+        else:
+            body = taken
+        blocks.append(f'<document name="{html.escape(name)}">\n{body}\n</document>')
+    return "\n\n".join(blocks + [content]).strip(), budget
 
 
 class SessionNotFound(Exception):
@@ -91,6 +117,7 @@ class ChatService:
         content: str,
         source: Source = "text",
         images: Sequence[ImageData] = (),
+        files: Sequence[FileRef] = (),
     ) -> AsyncIterator[ChatEvent]:
         """Run one turn. Raises SessionNotFound / SessionBusy before the first event."""
         if await self.repo.get_session(session_id) is None:
@@ -98,7 +125,7 @@ class ChatService:
         lock = self._lock_for(session_id)
         if lock.locked():
             raise SessionBusy(session_id)
-        return self._run_turn(lock, session_id, content.strip(), source, images)
+        return self._run_turn(lock, session_id, content.strip(), source, images, files)
 
     async def _run_turn(
         self,
@@ -107,24 +134,15 @@ class ChatService:
         content: str,
         source: Source,
         images: Sequence[ImageData],
+        files: Sequence[FileRef],
     ) -> AsyncIterator[ChatEvent]:
         parts: list[str] = []
         saved: MessageOut | None = None
         # Acquired inside the generator so an un-iterated generator can never leak the lock.
         await lock.acquire()
         try:
-            user_msg = await self.repo.add_message(session_id, "user", content, source, images)
-            history = await self.repo.list_messages(
-                session_id, limit=self.settings.max_history_messages
-            )
-            stored = await self.repo.image_data([m.id for m in history if m.images])
-            turns = normalize_turns(
-                [
-                    ChatTurn(m.role, m.content, tuple(stored.get(m.id, ())))
-                    for m in history
-                    if m.role in ("user", "assistant")
-                ]
-            )
+            user_msg = await self.repo.add_message(session_id, "user", content, source, images, files)
+            turns = await self._history_turns(session_id)
             provider = self.registry.get(self.runtime.provider)
             params = GenerationParams(
                 model=self.resolved_model(),
@@ -174,6 +192,24 @@ class ChatService:
             finally:
                 lock.release()
 
+    async def _history_turns(self, session_id: str, images: bool = True) -> list[ChatTurn]:
+        """The recent conversation for the model, with attached pictures and documents."""
+        history = [
+            m
+            for m in await self.repo.list_messages(session_id, limit=self.settings.max_history_messages)
+            if m.role in ("user", "assistant")
+        ]
+        pictures = await self.repo.image_data([m.id for m in history if m.images]) if images else {}
+        documents = await self.repo.file_texts([m.id for m in history if m.files])
+        # The newest documents get the room first; older ones are cut or left out.
+        budget = self.settings.document_max_chars
+        contents: dict[str, str] = {}
+        for m in reversed(history):
+            contents[m.id], budget = with_documents(m.content, documents.get(m.id, ()), budget)
+        return normalize_turns(
+            [ChatTurn(m.role, contents[m.id], tuple(pictures.get(m.id, ()))) for m in history]
+        )
+
     async def _save(self, session_id: str, parts: list[str], source: Source) -> MessageOut | None:
         text = "".join(parts).strip()
         if not text:
@@ -192,13 +228,8 @@ class ChatService:
         if lock.locked():
             raise SessionBusy(session_id)
         async with lock:
-            history = await self.repo.list_messages(
-                session_id, limit=self.settings.max_history_messages
-            )
-            turns = normalize_turns(
-                [ChatTurn(m.role, m.content) for m in history if m.role in ("user", "assistant")]
-                + [ChatTurn("user", instruction)]
-            )
+            history = await self._history_turns(session_id, images=False)
+            turns = normalize_turns([ChatTurn(t.role, t.content) for t in history] + [ChatTurn("user", instruction)])
             workflows = list(self.settings.workflows)
             params = GenerationParams(
                 model=self.resolved_model(),
@@ -239,10 +270,11 @@ class ChatService:
         content: str,
         source: Source = "text",
         images: Sequence[ImageData] = (),
+        files: Sequence[FileRef] = (),
     ) -> dict:
         """Non-streaming variant: collect the whole turn."""
         user_message = assistant_message = None
-        events = await self.stream_reply(session_id, content, source, images)
+        events = await self.stream_reply(session_id, content, source, images, files)
         async with aclosing(events):
             async for event in events:
                 if event.event == "start":

@@ -8,6 +8,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, PrivateAttr, model_validator
 
 from .config import ProviderName
+from .documents import MAX_FILES_PER_MESSAGE
 from .llm.base import ImageData
 
 Role = Literal["user", "assistant", "system"]
@@ -46,6 +47,26 @@ class ImageRef(BaseModel):
     media_type: str
 
 
+class FileRef(BaseModel):
+    """A document attached to a message."""
+
+    id: str
+    name: str
+    media_type: str
+    size: int
+
+
+class FileOut(FileRef):
+    """An uploaded document, before it's sent."""
+
+    chars: int  # characters of text read from it
+    pages: int | None = None  # PDF pages, slides or sheets
+
+
+class FileImport(BaseModel):
+    url: str = Field(min_length=8, max_length=2000)
+
+
 class MessageOut(BaseModel):
     id: str
     session_id: str
@@ -54,6 +75,7 @@ class MessageOut(BaseModel):
     source: Source = "text"
     created_at: datetime
     images: list[ImageRef] = []
+    files: list[FileRef] = []
 
 
 class SessionOut(BaseModel):
@@ -81,11 +103,13 @@ class ChatRequest(BaseModel):
     content: str = Field(default="", max_length=32_000)
     source: Source = "text"
     images: list[ImageIn] = Field(default=[], max_length=MAX_IMAGES_PER_MESSAGE)
+    # Ids of documents uploaded with POST /api/files.
+    files: list[str] = Field(default=[], max_length=MAX_FILES_PER_MESSAGE)
 
     @model_validator(mode="after")
     def _not_empty(self) -> "ChatRequest":
-        if not self.content.strip() and not self.images:
-            raise ValueError("a message needs text or at least one image")
+        if not self.content.strip() and not self.images and not self.files:
+            raise ValueError("a message needs text, a picture or a document")
         return self
 
 
@@ -264,3 +288,15 @@ class NotificationReport(BaseModel):
 
 class DeviceHello(BaseModel):
     device_id: str = Field(pattern=r"^[A-Za-z0-9-]{8,64}$")
+
+
+class SignIn(BaseModel):
+    passcode: str = Field(max_length=200)
+    device_id: str = Field(pattern=r"^[A-Za-z0-9-]{8,64}$")
+
+
+class AuthStatus(BaseModel):
+    remote: bool  # reached over the network, not from this computer
+    configured: bool  # APP_PASSCODE is set, so other devices can sign in
+    signed_in: bool  # always true on this computer
+    app_url: str  # the address other devices open, if set in .env

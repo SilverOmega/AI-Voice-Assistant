@@ -69,6 +69,33 @@ export function useVoice(
   useEffect(() => void ctrl.setPrefs(prefs), [ctrl, prefs]);
   useEffect(() => () => void ctrl.disable(), [ctrl]);
 
+  // Phones lock the screen after a minute, and the microphone stops with it: keep the screen
+  // on while voice is on.
+  const on = state !== "off";
+  useEffect(() => {
+    if (!on || !("wakeLock" in navigator)) return;
+    let lock: WakeLockSentinel | null = null;
+    let done = false;
+    const acquire = async () => {
+      if (document.visibilityState !== "visible") return;
+      try {
+        const next = await navigator.wakeLock.request("screen");
+        if (done) void next.release();
+        else lock = next;
+      } catch {
+        // battery saver, or not allowed here
+      }
+    };
+    void acquire();
+    // The lock ends whenever the page is hidden; take it again on return.
+    document.addEventListener("visibilitychange", acquire);
+    return () => {
+      done = true;
+      document.removeEventListener("visibilitychange", acquire);
+      void lock?.release();
+    };
+  }, [on]);
+
   const toggle = useCallback(async () => {
     setError(null);
     if (ctrl.enabled) await ctrl.disable();

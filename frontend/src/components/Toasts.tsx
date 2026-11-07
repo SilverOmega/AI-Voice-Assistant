@@ -19,7 +19,7 @@ const LEVEL_STYLES = {
 export function Toasts({ toasts, onDismiss }: { toasts: Toast[]; onDismiss: (id: string) => void }) {
   if (toasts.length === 0) return null;
   return (
-    <div className="pointer-events-none fixed right-4 top-4 z-50 flex w-80 max-w-[calc(100vw-2rem)] flex-col gap-2" aria-live="polite">
+    <div className="pointer-events-none fixed right-4 top-[max(1rem,env(safe-area-inset-top))] z-50 flex w-80 max-w-[calc(100vw-2rem)] flex-col gap-2" aria-live="polite">
       {toasts.slice(0, 4).map((t) => {
         const [border, icon] = LEVEL_STYLES[t.level ?? "warning"];
         return (
@@ -44,7 +44,7 @@ export function Toasts({ toasts, onDismiss }: { toasts: Toast[]; onDismiss: (id:
               </button>
             )}
           </div>
-          <button onClick={() => onDismiss(t.id)} aria-label="Dismiss" className="self-start rounded p-0.5 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200">
+          <button onClick={() => onDismiss(t.id)} aria-label="Dismiss" className="self-start rounded p-0.5 pointer-coarse:p-2 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200">
             <XIcon width={14} height={14} />
           </button>
           </div>

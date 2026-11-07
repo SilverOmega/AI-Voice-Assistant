@@ -26,6 +26,7 @@ class OllamaProvider(LLMProvider):
         keep_alive: str = "24h",
         num_thread: int = 0,
         client: httpx.AsyncClient | None = None,
+        max_ctx: int = 16384,
     ):
         self.default_model = default_model
         # How long Ollama keeps the model in memory after a request. Its own default (5m)
@@ -34,6 +35,7 @@ class OllamaProvider(LLMProvider):
         # CPU threads for generation (0 = Ollama decides). When other programs keep some cores
         # busy, fewer threads than cores is much faster: llama.cpp threads wait on each other.
         self.num_thread = num_thread
+        self.max_ctx = max_ctx
         self._base_url = base_url.rstrip("/")
         self._vision: dict[str, bool] = {}
         self._client = client or httpx.AsyncClient(
@@ -61,6 +63,7 @@ class OllamaProvider(LLMProvider):
             "keep_alive": self.keep_alive,
             "options": {
                 **self._load_options(),
+                **self._context_options(messages, params.max_tokens),
                 "temperature": params.temperature,
                 "num_predict": params.max_tokens,
             },
@@ -107,6 +110,7 @@ class OllamaProvider(LLMProvider):
             "keep_alive": self.keep_alive,
             "options": {
                 **self._load_options(),
+                **self._context_options(messages, params.max_tokens),
                 "temperature": params.temperature,
                 "num_predict": params.max_tokens,
             },
@@ -158,6 +162,25 @@ class OllamaProvider(LLMProvider):
         body = {"model": model, "keep_alive": self.keep_alive, "options": self._load_options()}
         resp = await self._client.post(f"{self._base_url}/api/generate", json=body)
         resp.raise_for_status()
+
+    def _context_options(self, messages: list[dict], max_tokens: int) -> dict:
+        """A context window big enough for long prompts, such as attached documents.
+
+        Ollama's default window is a few thousand tokens, and it silently drops the start of a
+        longer prompt (the system prompt and the document). Sizes go up in powers of two, so
+        the model is only reloaded when a conversation grows past a step; ordinary chats keep
+        Ollama's default and never trigger a reload.
+        """
+        if not self.max_ctx:
+            return {}
+        # About 3 characters a token for mixed prose and numbers, erring on the large side.
+        needed = sum(len(m["content"]) for m in messages) // 3 + min(max_tokens, 2048)
+        if needed <= 4096:
+            return {}
+        size = 8192
+        while size < needed and size < self.max_ctx:
+            size *= 2
+        return {"num_ctx": min(size, self.max_ctx)}
 
     def _load_options(self) -> dict:
         return {"num_thread": self.num_thread} if self.num_thread > 0 else {}

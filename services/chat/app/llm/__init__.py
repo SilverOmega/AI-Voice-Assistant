@@ -43,6 +43,7 @@ class ProviderRegistry:
                     settings.ollama_model,
                     keep_alive=settings.ollama_keep_alive,
                     num_thread=settings.ollama_num_thread,
+                    max_ctx=settings.ollama_max_ctx,
                 ),
                 "anthropic": AnthropicProvider(
                     settings.anthropic_model,

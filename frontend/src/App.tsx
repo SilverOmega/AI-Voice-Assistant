@@ -15,12 +15,18 @@ import { useSchedule } from "./hooks/useSchedule";
 import { useVoice, useVoicePrefs } from "./hooks/useVoice";
 import { api } from "./lib/api";
 import { MAX_IMAGES } from "./lib/images";
-import { formatWhen, notifyDesktop } from "./lib/notify";
-import type { Action, AutomationInfo, CalendarEvent, LiveNotification, VoiceServerMessage } from "./lib/types";
+import { formatWhen, notifyDesktop, onNotificationOpen } from "./lib/notify";
+import type { Action, AuthStatus, AutomationInfo, CalendarEvent, LiveNotification, VoiceServerMessage } from "./lib/types";
 
 const TOAST_SECONDS = { info: 8, warning: 12, error: 20 };
 
-export default function App() {
+interface Props {
+  /** How this device reached the app; null if the server couldn't say. */
+  auth: AuthStatus | null;
+  onSignedOut: () => void;
+}
+
+export default function App({ auth, onSignedOut }: Props) {
   const [automation, setAutomation] = useState<AutomationInfo | null>(null);
   const [pending, setPending] = useState<Action[]>([]);
   const [reminders, setReminders] = useState<CalendarEvent[]>([]);
@@ -58,7 +64,7 @@ export default function App() {
       if (note.category === "review") void refreshPending(); // so every open device shows the draft
       if (!note.popup) return;
       const sessionId = note.session_id;
-      notifyDesktop(note.title, note.body, sessionId ? () => selectRef.current(sessionId) : undefined);
+      notifyDesktop(note.title, note.body, sessionId ?? undefined);
       if (note.category === "review") return; // the review toast below covers it
       // Already in front of the user: the chat shows it (review card, cut-off reply, error).
       if (sessionId && sessionId === activeRef.current && document.visibilityState === "visible") return;
@@ -77,6 +83,14 @@ export default function App() {
   const chat = useChat({ onActionChange });
   const schedule = useSchedule(onRemind);
   selectRef.current = chat.selectSession;
+  useEffect(() => onNotificationOpen((id) => selectRef.current(id)), []);
+  // Opened from a notification while the app was closed: /?chat=<id>.
+  useEffect(() => {
+    const id = new URLSearchParams(window.location.search).get("chat");
+    if (!id) return;
+    window.history.replaceState(null, "", "/");
+    selectRef.current(id);
+  }, []);
   activeRef.current = chat.activeId;
   refreshScheduleRef.current = schedule.refresh;
   const health = useHealth();
@@ -146,7 +160,7 @@ export default function App() {
   };
 
   return (
-    <div className="flex h-full">
+    <div className="safe-x flex h-full">
       <Sidebar
         sessions={chat.sessions}
         activeId={chat.activeId}
@@ -175,8 +189,8 @@ export default function App() {
       />
 
       <main className="flex min-w-0 flex-1 flex-col">
-        <header className="flex items-center gap-3 border-b border-slate-200 px-4 py-3 dark:border-slate-800">
-          <button className="rounded p-1 md:hidden" onClick={() => setSidebarOpen(true)} aria-label="Open sidebar">
+        <header className="safe-top flex items-center gap-3 border-b border-slate-200 px-4 pb-3 dark:border-slate-800">
+          <button className="-ml-1 rounded p-2 md:hidden" onClick={() => setSidebarOpen(true)} aria-label="Open sidebar">
             <MenuIcon />
           </button>
           <h2 className="truncate font-medium">{title}</h2>
@@ -253,6 +267,8 @@ export default function App() {
         onClose={() => setSettingsOpen(false)}
         prefs={prefs}
         onPrefs={updatePrefs}
+        auth={auth}
+        onSignedOut={onSignedOut}
       />
     </div>
   );

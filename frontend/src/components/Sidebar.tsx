@@ -32,13 +32,13 @@ export function Sidebar(props: Props) {
     <>
       {open && <div className="fixed inset-0 z-20 bg-black/40 md:hidden" onClick={props.onClose} />}
       <aside
-        className={`fixed inset-y-0 left-0 z-30 flex w-72 flex-col border-r border-slate-200 bg-slate-50 transition-transform dark:border-slate-800 dark:bg-slate-900 md:static md:translate-x-0 ${
+        className={`fixed inset-y-0 left-0 z-30 flex w-72 max-w-[85vw] flex-col border-r pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] max-md:pl-[env(safe-area-inset-left)] border-slate-200 bg-slate-50 transition-transform dark:border-slate-800 dark:bg-slate-900 md:static md:translate-x-0 ${
           open ? "translate-x-0" : "-translate-x-full"
         }`}
       >
         <div className="flex items-center justify-between px-4 py-4">
           <h1 className="text-base font-semibold tracking-tight">Local Assistant</h1>
-          <button className="rounded p-1 md:hidden" onClick={props.onClose} aria-label="Close sidebar">
+          <button className="-mr-1 rounded p-2 md:hidden" onClick={props.onClose} aria-label="Close sidebar">
             <XIcon />
           </button>
         </div>
@@ -138,17 +138,17 @@ function Upcoming({ events, onDelete }: { events: CalendarEvent[]; onDelete: (id
               <p className="truncate">{e.title}</p>
               <p className="text-xs text-slate-500">{formatWhen(e.start)}</p>
             </div>
-            <div className="flex shrink-0 opacity-0 group-hover:opacity-100 focus-within:opacity-100">
+            <div className="flex shrink-0 opacity-0 group-hover:opacity-100 focus-within:opacity-100 pointer-coarse:opacity-100">
               <a
                 href={api.chatUrl(`/api/events/${e.id}/ics`)}
-                className="rounded p-1 text-slate-500 hover:text-slate-900 dark:hover:text-white"
+                className="rounded p-1 pointer-coarse:p-2 text-slate-500 hover:text-slate-900 dark:hover:text-white"
                 aria-label={`Add “${e.title}” to your calendar app`}
                 title="Add to calendar app (.ics)"
               >
                 <DownloadIcon width={14} height={14} />
               </a>
               <button
-                className="rounded p-1 text-slate-500 hover:text-red-600"
+                className="rounded p-1 pointer-coarse:p-2 text-slate-500 hover:text-red-600"
                 onClick={() => {
                   if (confirm(`Remove “${e.title}” from your schedule?`)) void onDelete(e.id);
                 }}
@@ -224,9 +224,9 @@ function SessionRow(props: {
           <span className="h-2 w-2 shrink-0 rounded-full bg-amber-500" title="A task is waiting for your review" />
         )}
       </button>
-      <div className="flex shrink-0 pr-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100">
+      <div className="flex shrink-0 pr-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 pointer-coarse:opacity-100">
         <button
-          className="rounded p-1 text-slate-500 hover:text-slate-900 dark:hover:text-white"
+          className="rounded p-1 pointer-coarse:p-2 text-slate-500 hover:text-slate-900 dark:hover:text-white"
           onClick={() => {
             setTitle(props.session.title);
             setEditing(true);
@@ -236,7 +236,7 @@ function SessionRow(props: {
           <PencilIcon width={14} height={14} />
         </button>
         <button
-          className="rounded p-1 text-slate-500 hover:text-red-600"
+          className="rounded p-1 pointer-coarse:p-2 text-slate-500 hover:text-red-600"
           onClick={() => {
             if (confirm(`Delete “${props.session.title}”?`)) void props.onDelete();
           }}

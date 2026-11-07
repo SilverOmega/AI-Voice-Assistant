@@ -1,6 +1,8 @@
 # Local Chat & Voice Assistant
-#   docker compose up -d --build        -> http://localhost:8080
-# Settings come from .env (copy .env.example). Backend ports are bound to localhost only.
+#   docker compose up -d --build        -> http://localhost:8080 on this computer
+#                                          https://<this computer's IP>:8443 on phones and tablets
+# Settings come from .env (copy .env.example). Backend ports are bound to localhost only; the
+# HTTPS port is open to your network, and needs APP_PASSCODE before any other device gets in.
 name: voice-assistant
 
 services:
@@ -41,6 +43,8 @@ services:
       ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-opus-5-5}
       ANTHROPIC_EFFORT: ${ANTHROPIC_EFFORT:-low}
       MAX_HISTORY_MESSAGES: ${MAX_HISTORY_MESSAGES:-30}
+      DOCUMENT_MAX_CHARS: ${DOCUMENT_MAX_CHARS:-40000}
+      OLLAMA_MAX_CTX: ${OLLAMA_MAX_CTX:-16384}
       EMAIL_COMPOSE: ${EMAIL_COMPOSE:-gmail}
       IMAP_HOST: ${IMAP_HOST:-imap.gmail.com}
       IMAP_PORT: ${IMAP_PORT:-993}
@@ -63,6 +67,7 @@ services:
       NTFY_TOKEN: ${NTFY_TOKEN:-}
       NOTIFY_REMIND_MINUTES: ${NOTIFY_REMIND_MINUTES:-30}
       APP_URL: ${APP_URL:-}
+      APP_PASSCODE: ${APP_PASSCODE:-}
     volumes:
       - chat-data:/data
     ports:
@@ -107,8 +112,15 @@ services:
 
   frontend:
     build: ./frontend
+    environment:
+      # This computer's LAN address (or name.local), for the HTTPS certificate. scripts/lan.ps1 sets it.
+      TLS_HOSTS: ${TLS_HOSTS:-}
+    volumes:
+      - certs:/etc/nginx/certs
     ports:
       - "127.0.0.1:${APP_PORT:-8080}:8080"
+      # Phones, tablets and other computers. Set REMOTE_BIND=127.0.0.1 to turn this off.
+      - "${REMOTE_BIND:-0.0.0.0}:${APP_HTTPS_PORT:-8443}:8443"
     depends_on:
       - chat
       - voice
@@ -119,3 +131,4 @@ volumes:
   ollama:
   chat-data:
   voice-models:
+  certs:

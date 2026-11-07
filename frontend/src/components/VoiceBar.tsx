@@ -93,14 +93,14 @@ export function VoiceBar(props: Props) {
     state === "wake-listening" ? `Say “${wakeLabel(prefs.wakeModel)}”` : STATE_TEXT[state];
 
   return (
-    <div className="mx-auto w-full max-w-3xl px-4 pb-2">
+    <div className="mx-auto w-full max-w-3xl px-2 pb-2 sm:px-4">
       <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-800 dark:bg-slate-900/60">
         <button
           onClick={enabled && ptt ? undefined : props.onToggle}
           {...pttHandlers}
           aria-label={enabled ? (ptt ? "Hold to talk" : "Turn voice off") : "Turn voice on"}
           title={enabled ? (ptt ? "Hold to talk" : "Turn voice off") : "Turn voice on"}
-          className={`relative flex h-12 w-12 shrink-0 touch-none select-none items-center justify-center rounded-full transition-colors ${ORB_COLOR[state]} ${
+          className={`relative flex h-12 w-12 shrink-0 touch-none select-none items-center [-webkit-touch-callout:none] justify-center rounded-full transition-colors ${ORB_COLOR[state]} ${
             state === "recording" ? "pulse-ring" : ""
           }`}
           style={
@@ -132,7 +132,7 @@ export function VoiceBar(props: Props) {
             ) : enabled ? (
               MODES.find((m) => m.id === prefs.mode)?.hint
             ) : (
-              "Click the mic to start a voice conversation"
+              "Press the mic to start a voice conversation"
             )}
           </p>
         </div>
@@ -170,7 +170,7 @@ export function VoiceBar(props: Props) {
                 aria-checked={prefs.mode === m.id}
                 onClick={() => props.onPrefs({ mode: m.id })}
                 title={m.hint}
-                className={`rounded-md px-2 py-1 ${
+                className={`rounded-md px-2 py-1 pointer-coarse:py-2 ${
                   prefs.mode === m.id ? "bg-white shadow-sm dark:bg-slate-600" : "text-slate-600 dark:text-slate-400"
                 }`}
               >

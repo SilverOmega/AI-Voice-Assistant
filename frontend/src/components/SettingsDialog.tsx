@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import { api } from "../lib/api";
-import type { AutomationInfo, ChannelPrefs, ChatConfig, NotificationSettings, ProviderName, VoicePrefs } from "../lib/types";
+import { api, auth as authApi } from "../lib/api";
+import type { AuthStatus, AutomationInfo, ChannelPrefs, ChatConfig, NotificationSettings, ProviderName, VoicePrefs } from "../lib/types";
 import { XIcon } from "./icons";
 
 interface Props {
@@ -8,6 +8,8 @@ interface Props {
   onClose: () => void;
   prefs: VoicePrefs;
   onPrefs: (changes: Partial<VoicePrefs>) => void;
+  auth: AuthStatus | null;
+  onSignedOut: () => void;
 }
 
 const PROVIDER_LABELS: Record<ProviderName, string> = {
@@ -16,7 +18,7 @@ const PROVIDER_LABELS: Record<ProviderName, string> = {
   echo: "Echo (offline test)",
 };
 
-export function SettingsDialog({ open, onClose, prefs, onPrefs }: Props) {
+export function SettingsDialog({ open, onClose, prefs, onPrefs, auth, onSignedOut }: Props) {
   const [config, setConfig] = useState<ChatConfig | null>(null);
   const [draft, setDraft] = useState({ provider: "ollama" as ProviderName, model: "", system_prompt: "", temperature: 0.7 });
   const [models, setModels] = useState<string[]>([]);
@@ -26,6 +28,7 @@ export function SettingsDialog({ open, onClose, prefs, onPrefs }: Props) {
   const [automation, setAutomation] = useState<AutomationInfo | null>(null);
   const [phoneTest, setPhoneTest] = useState<string | null>(null);
   const [notify, setNotify] = useState<NotificationSettings | null>(null);
+  const [access, setAccess] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -42,6 +45,7 @@ export function SettingsDialog({ open, onClose, prefs, onPrefs }: Props) {
     api.automationInfo().then(setAutomation, () => setAutomation(null));
     api.notificationSettings().then(setNotify, () => setNotify(null));
     setPhoneTest(null);
+    setAccess(null);
   }, [open]);
 
   useEffect(() => {
@@ -69,6 +73,21 @@ export function SettingsDialog({ open, onClose, prefs, onPrefs }: Props) {
       setNotify(await api.updateNotificationSettings({ [id]: prefs }));
     } catch (err) {
       setStatus(`Could not save notification settings: ${(err as Error).message}`);
+    }
+  };
+
+  const signOut = async () => {
+    await authApi.logout().catch(() => {});
+    onSignedOut();
+  };
+
+  const signOutOthers = async () => {
+    if (!confirm("Sign out every other phone, tablet and computer? They'll need the passcode again.")) return;
+    try {
+      await authApi.signOutOthers();
+      setAccess("Done. Every other device needs the passcode again.");
+    } catch (err) {
+      setAccess((err as Error).message);
     }
   };
 
@@ -106,14 +125,14 @@ export function SettingsDialog({ open, onClose, prefs, onPrefs }: Props) {
         className="flex h-full w-full max-w-md flex-col bg-white shadow-xl dark:bg-slate-900"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4 dark:border-slate-800">
+        <div className="flex items-center justify-between border-b border-slate-200 px-5 pt-[max(1rem,env(safe-area-inset-top))] pb-4 dark:border-slate-800">
           <h2 className="font-semibold">Settings</h2>
-          <button onClick={onClose} aria-label="Close settings" className="rounded p-1 hover:bg-slate-100 dark:hover:bg-slate-800">
+          <button onClick={onClose} aria-label="Close settings" className="-mr-1 rounded p-2 hover:bg-slate-100 dark:hover:bg-slate-800">
             <XIcon />
           </button>
         </div>
 
-        <div className="flex-1 space-y-6 overflow-y-auto px-5 py-5">
+        <div className="flex-1 space-y-6 overflow-y-auto overscroll-contain px-5 pt-5 pb-[max(1.25rem,env(safe-area-inset-bottom))]">
           <section className="space-y-3">
             <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">Language model</h3>
             <label className="block text-sm">
@@ -313,6 +332,12 @@ export function SettingsDialog({ open, onClose, prefs, onPrefs }: Props) {
               </p>
             )}
           </section>
+
+          <section className="space-y-2">
+            <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">Phones and tablets</h3>
+            <DeviceAccess auth={auth} onSignOut={signOut} onSignOutOthers={signOutOthers} />
+            {access && <p className="text-sm text-slate-600 dark:text-slate-400">{access}</p>}
+          </section>
         </div>
       </div>
     </div>
@@ -333,5 +358,59 @@ function Toggle(props: { label: string; hint?: string; checked: boolean; onChang
         {props.hint && <span className="block text-xs text-slate-500">{props.hint}</span>}
       </span>
     </label>
+  );
+}
+
+function DeviceAccess(props: { auth: AuthStatus | null; onSignOut: () => void; onSignOutOthers: () => void }) {
+  const { auth } = props;
+  const button =
+    "rounded-lg border border-slate-300 px-3 py-1.5 text-sm hover:bg-slate-100 dark:border-slate-700 dark:hover:bg-slate-800";
+  if (!auth) return <p className="text-sm text-slate-500">Can't check right now.</p>;
+  if (auth.remote) {
+    return (
+      <>
+        <p className="text-sm">This device is signed in with the passcode.</p>
+        <div className="flex flex-wrap gap-2">
+          <button onClick={props.onSignOut} className={button}>
+            Sign out
+          </button>
+          <button onClick={props.onSignOutOthers} className={button}>
+            Sign out all other devices
+          </button>
+        </div>
+      </>
+    );
+  }
+  if (!auth.configured) {
+    return (
+      <p className="text-sm text-slate-600 dark:text-slate-400">
+        Off: the assistant only opens on this computer. To use it on an iPhone, iPad or Android phone, run{" "}
+        <code>scripts\lan.ps1</code> (it sets <code>APP_PASSCODE</code> and the address in <code>.env</code>), then
+        restart. See the README.
+      </p>
+    );
+  }
+  const url = auth.app_url || "https://<this computer's IP>:8443";
+  return (
+    <>
+      <p className="text-sm">
+        On a phone, tablet or another computer on the same Wi-Fi, open{" "}
+        {auth.app_url ? <strong className="break-all">{url}</strong> : <code>{url}</code>} and enter the passcode
+        (<code>APP_PASSCODE</code> in <code>.env</code>).
+      </p>
+      <ul className="list-disc space-y-1 pl-5 text-xs text-slate-500">
+        <li>
+          The first visit warns about the certificate. Install <code className="break-all">{url}/ca.crt</code> on the
+          device to trust it; the README has the steps for iPhone, iPad and Android.
+        </li>
+        <li>
+          To keep it on the home screen: Share, then <em>Add to Home Screen</em> in Safari; or the menu, then{" "}
+          <em>Add to Home screen</em> (or <em>Install app</em>) in Chrome and Samsung Internet.
+        </li>
+      </ul>
+      <button onClick={props.onSignOutOthers} className={button}>
+        Sign out all other devices
+      </button>
+    </>
   );
 }

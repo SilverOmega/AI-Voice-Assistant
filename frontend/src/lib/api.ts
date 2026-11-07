@@ -3,10 +3,12 @@ import type {
   Action,
   ActionKind,
   AppNotification,
+  AuthStatus,
   AutomationInfo,
   CalendarEvent,
   ChannelPrefs,
   ChatConfig,
+  FileRef,
   ImageUpload,
   Message,
   NotificationCategory,
@@ -15,6 +17,7 @@ import type {
   Session,
   SessionDetail,
   Source,
+  UploadedFile,
 } from "./types";
 
 export const CHAT_BASE = "/chat";
@@ -30,12 +33,20 @@ export class ApiError extends Error {
   }
 }
 
+/** Fired when the server says this device isn't signed in (any more): the app shows sign-in. */
+export const AUTH_REQUIRED_EVENT = "assistant:auth-required";
+
+async function failure(resp: Response): Promise<ApiError> {
+  if (resp.status === 401) window.dispatchEvent(new Event(AUTH_REQUIRED_EVENT));
+  return new ApiError(resp.status, await errorDetail(resp));
+}
+
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const resp = await fetch(url, {
     ...init,
     headers: { "Content-Type": "application/json", ...init?.headers },
   });
-  if (!resp.ok) throw new ApiError(resp.status, await errorDetail(resp));
+  if (!resp.ok) throw await failure(resp);
   return (resp.status === 204 ? undefined : await resp.json()) as T;
 }
 
@@ -53,6 +64,23 @@ export function wsUrl(path: string): string {
   const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
   return `${proto}//${window.location.host}${path}`;
 }
+
+// ---- signing in (only phones, tablets and other computers need to) -------
+
+export const auth = {
+  status: () => request<AuthStatus>(`${CHAT_BASE}/api/auth/status`),
+  // Not through request(): a wrong passcode is a 401 too, and that's for the form to show.
+  login: async (passcode: string, deviceId: string): Promise<void> => {
+    const resp = await fetch(`${CHAT_BASE}/api/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ passcode, device_id: deviceId }),
+    });
+    if (!resp.ok) throw new ApiError(resp.status, await errorDetail(resp));
+  },
+  logout: () => request<void>(`${CHAT_BASE}/api/auth/logout`, { method: "POST" }),
+  signOutOthers: () => request<void>(`${CHAT_BASE}/api/auth/sign-out-all`, { method: "POST" }),
+};
 
 // ---- chat service ---------------------------------------------------------
 
@@ -75,6 +103,23 @@ export const api = {
   listModels: () =>
     request<{ provider: string; default: string; models: string[] }>(`${CHAT_BASE}/api/models`),
   imageUrl: (id: string) => `${CHAT_BASE}/api/images/${id}`,
+
+  // ---- documents: uploaded first, then sent with a message by id -------------
+  /** The server reads the text right away and refuses files it can't read, with the reason. */
+  uploadFile: async (file: File): Promise<UploadedFile> => {
+    const resp = await fetch(`${CHAT_BASE}/api/files?name=${encodeURIComponent(file.name)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/octet-stream" },
+      body: file,
+    });
+    if (!resp.ok) throw await failure(resp);
+    return resp.json();
+  },
+  /** Google Drive/Docs, OneDrive, Dropbox share links, or any public file or web page. */
+  importFile: (url: string) =>
+    request<UploadedFile>(`${CHAT_BASE}/api/files/import`, { method: "POST", body: JSON.stringify({ url }) }),
+  deleteFile: (id: string) => request<void>(`${CHAT_BASE}/api/files/${id}`, { method: "DELETE" }),
+  fileUrl: (file: FileRef) => `${CHAT_BASE}/api/files/${file.id}`,
   /** Links the chat service returns (downloads) are relative to it. */
   chatUrl: (path: string) => `${CHAT_BASE}${path}`,
 
@@ -127,7 +172,7 @@ export const api = {
     const ext = audio.type.includes("ogg") ? "ogg" : audio.type.includes("mp4") ? "m4a" : "webm";
     form.append("file", audio, `dictation.${ext}`);
     const resp = await fetch(`${VOICE_BASE}/api/stt`, { method: "POST", body: form });
-    if (!resp.ok) throw new ApiError(resp.status, await errorDetail(resp));
+    if (!resp.ok) throw await failure(resp);
     return resp.json();
   },
   wakeModels: () =>
@@ -161,14 +206,15 @@ export async function streamMessage(
   signal?: AbortSignal,
   source: Source = "text",
   images: ImageUpload[] = [],
+  files: string[] = [],
 ): Promise<void> {
   const resp = await fetch(`${CHAT_BASE}/api/sessions/${sessionId}/messages/stream`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ content, source, images }),
+    body: JSON.stringify({ content, source, images, files }),
     signal,
   });
-  if (!resp.ok || !resp.body) throw new ApiError(resp.status, await errorDetail(resp));
+  if (!resp.ok || !resp.body) throw await failure(resp);
 
   const reader = resp.body.pipeThrough(new TextDecoderStream()).getReader();
   const parser = new SseParser();

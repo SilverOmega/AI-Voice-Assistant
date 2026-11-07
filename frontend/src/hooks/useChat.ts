@@ -3,7 +3,7 @@ import { api, streamMessage } from "../lib/api";
 import type { PreparedImage } from "../lib/images";
 import { localNow } from "../lib/notify";
 import type { PlanTemplate } from "../lib/plans";
-import type { Action, ActionKind, Message, Session, Source } from "../lib/types";
+import type { Action, ActionKind, Message, Session, Source, UploadedFile } from "../lib/types";
 
 function localMessage(sessionId: string, role: "user" | "assistant", content: string, source: Source): Message {
   return {
@@ -109,9 +109,9 @@ export function useChat({ onActionChange }: Options = {}) {
     });
 
   const send = useCallback(
-    async (text: string, images: PreparedImage[] = [], newSessionTitle?: string) => {
+    async (text: string, images: PreparedImage[] = [], files: UploadedFile[] = [], newSessionTitle?: string) => {
       const content = text.trim();
-      if ((!content && images.length === 0) || streaming) return;
+      if ((!content && images.length === 0 && files.length === 0) || streaming) return;
       setError(null);
       setStreaming(true);
       const controller = new AbortController();
@@ -120,7 +120,11 @@ export function useChat({ onActionChange }: Options = {}) {
         const sessionId = await ensureSession(newSessionTitle);
         setMessages((m) => [
           ...m,
-          { ...localMessage(sessionId, "user", content, "text"), previews: images.map((i) => i.previewUrl) },
+          {
+            ...localMessage(sessionId, "user", content, "text"),
+            previews: images.map((i) => i.previewUrl),
+            files: files.map(({ id, name, media_type, size }) => ({ id, name, media_type, size })),
+          },
           localMessage(sessionId, "assistant", "", "text"),
         ]);
         await streamMessage(
@@ -133,6 +137,7 @@ export function useChat({ onActionChange }: Options = {}) {
           controller.signal,
           "text",
           images.map((i) => ({ media_type: i.mediaType, data: i.data })),
+          files.map((f) => f.id),
         );
         updateLastAssistant((m) => ({ ...m, pending: false }));
         await Promise.all([loadSession(sessionId), refreshSessions()]);
@@ -223,7 +228,7 @@ export function useChat({ onActionChange }: Options = {}) {
     (plan: PlanTemplate) => {
       if (streaming) return;
       selectSession(null);
-      void send(plan.prompt, [], `Plan: ${plan.title}`);
+      void send(plan.prompt, [], [], `Plan: ${plan.title}`);
     },
     [streaming, selectSession, send],
   );

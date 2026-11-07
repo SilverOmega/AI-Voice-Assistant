@@ -1,21 +1,25 @@
 """HTTP routes for the chat service."""
 
 import asyncio
-import ipaddress
 import json
 import logging
 import re
 import time
 from collections.abc import AsyncIterator
 from contextlib import aclosing
+from pathlib import PurePosixPath
+from urllib.parse import quote
+
+import httpx
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, Response, status
 from fastapi.responses import StreamingResponse
 
 from .automation import ActionInvalid, Automation, CredentialsRejected, event_ics, validate_payload
 from .chat_service import ChatEvent, ChatService, SessionBusy, SessionNotFound
+from .documents import MAX_FILE_BYTES, DocumentError, extract, fetch_link
 from .llm import LLMError
-from .notifications import NotificationCenter, device_label
+from .notifications import NotificationCenter, shown_ip, visitor
 from .notifier import Notifier
 from .schemas import (
     ActionApprove,
@@ -28,6 +32,9 @@ from .schemas import (
     ChatResponse,
     ConfigOut,
     EventOut,
+    FileImport,
+    FileOut,
+    FileRef,
     MAX_IMAGES_PER_MESSAGE,
     DeviceHello,
     HealthOut,
@@ -177,10 +184,20 @@ async def delete_session(session_id: str, request: Request) -> Response:
 # ---- chat ---------------------------------------------------------------------
 
 
+async def _attached_files(request: Request, body: ChatRequest) -> list[FileRef]:
+    files = await _svc(request).repo.unsent_files(body.files)
+    if files is None:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "A document wasn't found or was already sent. Attach it again."
+        )
+    return files
+
+
 async def _start_turn(request: Request, session_id: str, body: ChatRequest):
     images = [img.to_image_data() for img in body.images]
+    files = await _attached_files(request, body)
     try:
-        return await _svc(request).stream_reply(session_id, body.content, body.source, images)
+        return await _svc(request).stream_reply(session_id, body.content, body.source, images, files)
     except SessionNotFound:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session not found") from None
     except SessionBusy:
@@ -226,8 +243,9 @@ async def stream_message(session_id: str, body: ChatRequest, request: Request) -
 @router.post("/api/sessions/{session_id}/messages", response_model=ChatResponse)
 async def send_message(session_id: str, body: ChatRequest, request: Request) -> ChatResponse:
     images = [img.to_image_data() for img in body.images]
+    files = await _attached_files(request, body)
     try:
-        result = await _svc(request).reply(session_id, body.content, body.source, images)
+        result = await _svc(request).reply(session_id, body.content, body.source, images, files)
     except SessionNotFound:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session not found") from None
     except SessionBusy:
@@ -253,6 +271,75 @@ async def get_image(image_id: str, request: Request) -> Response:
             "X-Content-Type-Options": "nosniff",
         },
     )
+
+
+# ---- documents -----------------------------------------------------------------
+# Uploaded (or fetched from a link) and read first; a message then refers to them by id.
+
+
+async def _store_document(request: Request, name: str, data: bytes) -> FileOut:
+    name = PurePosixPath(name.replace("\\", "/")).name.strip()[:200] or "document"
+    try:
+        # PDF and spreadsheet parsing is CPU work: keep it off the event loop.
+        doc = await asyncio.to_thread(extract, name, data)
+    except DocumentError as exc:
+        raise HTTPException(422, str(exc)) from None
+    return await _svc(request).repo.add_file(name, doc.media_type, data, doc.text, doc.pages)
+
+
+@router.post("/api/files", response_model=FileOut, status_code=status.HTTP_201_CREATED)
+async def upload_file(request: Request, name: str) -> FileOut:
+    """Upload a document: the request body is the file itself, `name` its file name."""
+    chunks, total = [], 0
+    async for chunk in request.stream():
+        total += len(chunk)
+        if total > MAX_FILE_BYTES:
+            raise HTTPException(
+                413,
+                f"{name} is larger than {MAX_FILE_BYTES // (1024 * 1024)} MB.",
+            )
+        chunks.append(chunk)
+    return await _store_document(request, name, b"".join(chunks))
+
+
+@router.post("/api/files/import", response_model=FileOut, status_code=status.HTTP_201_CREATED)
+async def import_file(body: FileImport, request: Request) -> FileOut:
+    """Fetch a document from a link: Google Drive/Docs, OneDrive, Dropbox or any public URL."""
+    timeout = httpx.Timeout(30.0, connect=10.0)
+    headers = {"User-Agent": "Mozilla/5.0 (compatible; LocalAssistant/1.0)"}
+    async with httpx.AsyncClient(timeout=timeout, headers=headers) as client:
+        try:
+            name, data = await fetch_link(body.url, client)
+        except DocumentError as exc:
+            raise HTTPException(422, str(exc)) from None
+    return await _store_document(request, name, data)
+
+
+@router.get("/api/files/{file_id}")
+async def download_file(file_id: str, request: Request) -> Response:
+    found = await _svc(request).repo.get_file(file_id)
+    if found is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "File not found")
+    name, media_type, data = found
+    return Response(
+        data,
+        media_type=media_type,
+        headers={
+            # Always a download, never rendered here: an attached HTML file can't run as this app.
+            "Content-Disposition": f"attachment; filename*=UTF-8''{quote(name)}",
+            "X-Content-Type-Options": "nosniff",
+            "Content-Security-Policy": "sandbox",
+            "Cache-Control": "private, max-age=31536000, immutable",
+        },
+    )
+
+
+@router.delete("/api/files/{file_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_file(file_id: str, request: Request) -> Response:
+    """Remove a document that was uploaded but not sent."""
+    if not await _svc(request).repo.delete_unsent_file(file_id):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "File not found or already sent")
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 # ---- task automation ----------------------------------------------------------
@@ -494,24 +581,14 @@ async def report_notification(body: NotificationReport, request: Request) -> dic
 @router.post("/api/devices/hello")
 async def device_hello(body: DeviceHello, request: Request) -> dict:
     """Called when the app opens. The first visit from a browser or phone is a new sign-in."""
-    label = device_label(request.headers.get("user-agent", ""))
-    ip = request.headers.get("x-real-ip") or (request.client.host if request.client else "unknown")
+    label, ip = visitor(request)
     new = await _svc(request).repo.touch_device(body.device_id, label, ip)
     if new:
-        where = f" at {ip}" if _real_client_ip(ip) else ""
         await _notifications(request).emit(
             "sign_in",
             "New device opened your assistant",
-            f"{label}{where}. If this wasn't you, someone on your network can reach the assistant.",
+            f"{label}{shown_ip(ip)}. If this wasn't you, someone on your network can reach the assistant.",
             level="warning",
         )
     return {"new": new}
 
-
-def _real_client_ip(ip: str) -> bool:
-    """Docker Desktop shows every visitor as its own gateway (172.16.0.0/12); don't print that."""
-    try:
-        addr = ipaddress.ip_address(ip)
-    except ValueError:
-        return False
-    return not (addr.is_loopback or addr in ipaddress.ip_network("172.16.0.0/12"))

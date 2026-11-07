@@ -6,10 +6,13 @@ turned on for its category. Sending never raises into the code that reported the
 """
 
 import asyncio
+import ipaddress
 import logging
 import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+
+from fastapi import Request
 
 from .notifier import Notifier, review_message
 from .repository import Repository
@@ -38,7 +41,9 @@ class Category:
 
 CATEGORIES: dict[str, Category] = {
     "sign_in": Category(
-        "New device sign-in", "A browser or phone opens the assistant for the first time", phone=True
+        "Sign-ins",
+        "A new browser or phone opens the assistant, a device signs in, or a wrong passcode is entered",
+        phone=True,
     ),
     "credentials": Category(
         "Rejected keys and tokens",
@@ -71,6 +76,27 @@ def device_label(user_agent: str) -> str:
         "an unknown device",
     )
     return f"{browser} on {system}"
+
+
+def visitor(request: Request) -> tuple[str, str]:
+    """(device label, IP address) of whoever made the request; nginx passes the address on."""
+    ip = request.headers.get("x-real-ip") or (request.client.host if request.client else "unknown")
+    return device_label(request.headers.get("user-agent", "")), ip
+
+
+def shown_ip(ip: str) -> str:
+    """' at 192.168.1.23' for notification text, or '' when the address would mislead.
+
+    Docker Desktop shows every visitor as its own gateway (172.16.0.0/12): no address is
+    better than a wrong one.
+    """
+    try:
+        addr = ipaddress.ip_address(ip)
+    except ValueError:
+        return ""
+    if addr.is_loopback or addr in ipaddress.ip_network("172.16.0.0/12"):
+        return ""
+    return f" at {ip}"
 
 
 class NotificationCenter:

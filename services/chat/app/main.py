@@ -4,9 +4,10 @@ import asyncio
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from . import auth
 from .automation import Automation
 from .chat_service import ChatService
 from .config import Settings, get_settings
@@ -36,6 +37,8 @@ def create_app(
             system_prompt=settings.system_prompt,
             temperature=settings.temperature,
         )
+        app.state.settings = settings
+        app.state.auth = auth.Auth(repo, settings.app_passcode)
         app.state.notifier = Notifier(settings)
         app.state.notifications = NotificationCenter(repo, app.state.notifier)
         app.state.chat = ChatService(repo, providers, settings, runtime, app.state.notifications)
@@ -63,7 +66,8 @@ def create_app(
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    app.include_router(router)
+    app.include_router(auth.router)
+    app.include_router(router, dependencies=[Depends(auth.require_sign_in)])
     return app
 
 

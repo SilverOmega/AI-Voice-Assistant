@@ -2,9 +2,10 @@ import { useEffect, useRef } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { api } from "../lib/api";
+import { describeFile } from "../lib/files";
 import type { Action, AutomationInfo, Message } from "../lib/types";
 import { ActionCard, KIND_LABELS } from "./ActionCard";
-import { MicIcon } from "./icons";
+import { FileIcon, MicIcon } from "./icons";
 
 interface Props {
   messages: Message[];
@@ -89,6 +90,7 @@ function MessageBubble({ message }: { message: Message }) {
           </div>
         )}
         <MessageImages message={message} />
+        <MessageFiles message={message} />
         {thinking ? (
           <TypingDots />
         ) : isUser ? (
@@ -134,6 +136,31 @@ function MessageImages({ message }: { message: Message }) {
             loading="lazy"
             className={`rounded-lg object-cover ${urls.length === 1 ? "max-h-64 max-w-full" : "h-32 w-32"}`}
           />
+        </a>
+      ))}
+    </div>
+  );
+}
+
+/** Attached documents, as chips that download the original file. */
+function MessageFiles({ message }: { message: Message }) {
+  const files = message.files ?? [];
+  if (files.length === 0) return null;
+  return (
+    <div className={`flex flex-wrap gap-2 ${message.content ? "mb-2" : ""}`}>
+      {files.map((f) => (
+        <a
+          key={f.id}
+          href={api.fileUrl(f)}
+          download={f.name}
+          title={`Download ${f.name}`}
+          className="flex max-w-[16rem] items-center gap-2 rounded-lg bg-white/15 px-2.5 py-1.5 hover:bg-white/25"
+        >
+          <FileIcon width={18} height={18} className="shrink-0" />
+          <span className="min-w-0">
+            <span className="block truncate text-sm font-medium">{f.name}</span>
+            <span className="block truncate text-xs text-indigo-100">{describeFile(f)}</span>
+          </span>
         </a>
       ))}
     </div>

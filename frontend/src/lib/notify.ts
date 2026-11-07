@@ -29,16 +29,39 @@ export function requestNotifyPermission(): void {
   }
 }
 
-/** A desktop notification when the page isn't in front; the in-app toast covers the rest. */
-export function notifyDesktop(title: string, body: string, onClick?: () => void): void {
+const openChatListeners = new Set<(sessionId: string) => void>();
+
+/** Runs when the user taps a notification that belongs to a chat. */
+export function onNotificationOpen(listener: (sessionId: string) => void): () => void {
+  openChatListeners.add(listener);
+  return () => openChatListeners.delete(listener);
+}
+
+function openChat(sessionId?: string) {
+  window.focus();
+  if (sessionId) openChatListeners.forEach((l) => l(sessionId));
+}
+
+// Taps on notifications shown by the service worker (see public/sw.js).
+navigator.serviceWorker?.addEventListener("message", (e: MessageEvent) => {
+  if (e.data?.type === "open-chat") openChat(e.data.sessionId);
+});
+
+/** A system notification when the page isn't in front; the in-app toast covers the rest. */
+export function notifyDesktop(title: string, body: string, sessionId?: string): void {
   if (!("Notification" in window) || Notification.permission !== "granted") return;
   if (document.visibilityState === "visible" && document.hasFocus()) return;
-  const n = new Notification(title, { body, tag: `${title}:${body}` });
-  n.onclick = () => {
-    window.focus();
-    onClick?.();
-    n.close();
-  };
+  const options = { body, tag: `${title}:${body}`, icon: "/icon-192.png", data: { sessionId } };
+  try {
+    const n = new Notification(title, options);
+    n.onclick = () => {
+      openChat(sessionId);
+      n.close();
+    };
+  } catch {
+    // Android, and the app installed on an iPhone or iPad, only allow it through the service worker.
+    void navigator.serviceWorker?.ready.then((reg) => reg.showNotification(title, options)).catch(() => {});
+  }
 }
 
 /** "just now", "5 min ago", "3 h ago", then the date. */

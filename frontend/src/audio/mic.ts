@@ -39,6 +39,8 @@ export class MicCapture {
       audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
     });
     const ctx = new AudioContext();
+    // iPhones and iPads can create it suspended; capturing is allowed to start it.
+    if (ctx.state === "suspended") await ctx.resume().catch(() => {});
     try {
       await ctx.audioWorklet.addModule(WORKLET_URL);
     } catch (err) {
