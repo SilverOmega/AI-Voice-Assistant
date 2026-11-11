@@ -103,3 +103,58 @@ body {
   background: currentColor;
   animation: pulse-ring 1.4s ease-out infinite;
 }
+
+/* The pet: breathing in step with the snore (3.6 s, see audio/snore.ts) and drifting Zzz. */
+@keyframes pet-breathe {
+  0%,
+  100% {
+    transform: scale(1, 1);
+  }
+  42% {
+    transform: scale(1.015, 1.045);
+  }
+}
+.pet-breathe {
+  transform-box: fill-box;
+  transform-origin: 50% 100%;
+  animation: pet-breathe 3.6s ease-in-out infinite;
+}
+@keyframes pet-z {
+  0% {
+    opacity: 0;
+    transform: translate(0, 6px) scale(0.7);
+  }
+  25% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(12px, -24px) scale(1.15);
+  }
+}
+.pet-z {
+  animation: pet-z 3.6s ease-out infinite both;
+}
+/* Awake: a blink every few seconds. */
+@keyframes pet-blink {
+  0%,
+  92%,
+  100% {
+    transform: scaleY(1);
+  }
+  95% {
+    transform: scaleY(0.1);
+  }
+}
+.pet-blink {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: pet-blink 4.5s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .pet-breathe,
+  .pet-blink,
+  .pet-z {
+    animation: none;
+  }
+}

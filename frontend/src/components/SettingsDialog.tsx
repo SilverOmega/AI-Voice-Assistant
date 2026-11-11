@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, auth as authApi } from "../lib/api";
+import { PETS, type PetKind } from "../hooks/usePet";
 import type { AuthStatus, AutomationInfo, ChannelPrefs, ChatConfig, NotificationSettings, ProviderName, VoicePrefs } from "../lib/types";
 import { XIcon } from "./icons";
 
@@ -10,6 +11,8 @@ interface Props {
   onPrefs: (changes: Partial<VoicePrefs>) => void;
   auth: AuthStatus | null;
   onSignedOut: () => void;
+  pet: PetKind;
+  onPet: (pet: PetKind) => void;
 }
 
 const PROVIDER_LABELS: Record<ProviderName, string> = {
@@ -18,7 +21,7 @@ const PROVIDER_LABELS: Record<ProviderName, string> = {
   echo: "Echo (offline test)",
 };
 
-export function SettingsDialog({ open, onClose, prefs, onPrefs, auth, onSignedOut }: Props) {
+export function SettingsDialog({ open, onClose, prefs, onPrefs, auth, onSignedOut, pet, onPet }: Props) {
   const [config, setConfig] = useState<ChatConfig | null>(null);
   const [draft, setDraft] = useState({ provider: "ollama" as ProviderName, model: "", system_prompt: "", temperature: 0.7 });
   const [models, setModels] = useState<string[]>([]);
@@ -216,6 +219,24 @@ export function SettingsDialog({ open, onClose, prefs, onPrefs, auth, onSignedOu
               checked={prefs.bargeIn}
               onChange={(v) => onPrefs({ bargeIn: v })}
             />
+          </section>
+
+          <section className="space-y-3">
+            <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">Pet</h3>
+            <label className="block text-sm">
+              Pet
+              <select className={field} value={pet} onChange={(e) => onPet(e.target.value as PetKind)}>
+                {PETS.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.label}
+                  </option>
+                ))}
+              </select>
+              <span className="mt-1 block text-xs text-slate-500">
+                Sits next to the chat. It falls asleep while the assistant is offline; then point at it (or tap it) to
+                hear it snore.
+              </span>
+            </label>
           </section>
 
           <section className="space-y-3">

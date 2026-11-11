@@ -39,9 +39,14 @@ export function useHealth(intervalMs = 15_000): HealthState {
     };
     void poll();
     const timer = window.setInterval(poll, intervalMs);
+    // Losing or regaining the network: check right away rather than at the next poll.
+    window.addEventListener("online", poll);
+    window.addEventListener("offline", poll);
     return () => {
       cancelled = true;
       window.clearInterval(timer);
+      window.removeEventListener("online", poll);
+      window.removeEventListener("offline", poll);
     };
   }, [intervalMs]);
 

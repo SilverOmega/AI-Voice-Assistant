@@ -14,6 +14,8 @@ A private AI assistant that runs on your own computer. Type to it, talk to it, o
 - **Tasks with review**: draft an email, add an event to your schedule, compile a document (for example, notes from the current chat), or trigger a workflow webhook. The assistant only drafts. You get a notification, review and edit the draft, and nothing is sent, saved or run until you press **Approve**.
 - **Sessions**: create, rename and delete conversations. Voice turns go into the same history.
 - **Runtime settings**: switch provider, model, system prompt and temperature without restarting.
+- **Compact chat window**: the chat sits in a floating card. Conversations, plans, the schedule, service status and Settings are in the drawer behind the person icon. The pop-out icon opens the chat in its own small window.
+- **Pet**: a cat, dog or bunny sits next to the chat. While the assistant is offline (the chat service or its model is down) it falls asleep; point at it to hear it snore, or tap it on a phone. Choose the pet, or none, in Settings.
 
 ## Architecture
 
@@ -67,7 +69,7 @@ Open **http://localhost:8080**. The first start downloads several things:
 - the Whisper model (~150 MB)
 - the Piper voice (~60 MB)
 
-Follow progress with `docker compose logs -f ollama-pull voice`. The sidebar's status dots turn green when each service is ready.
+Follow progress with `docker compose logs -f ollama-pull voice`. The status dots in the drawer (person icon) turn green when each service is ready.
 
 - **Port 8080 already in use?** Set `APP_PORT=8088` in `.env`.
 - **NVIDIA GPU for the LLM:** `docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build`. Check it took effect with `docker compose exec ollama ollama ps` (PROCESSOR should say GPU). If it still says CPU and `docker compose logs ollama` mentions `failed to initialize CUDA`, update Docker Desktop and run `wsl --update`, or use the next option.
@@ -128,7 +130,7 @@ If the computer's address changes, run the script again and restart the frontend
 - **Tasks:** click the lightning button left of the message box and pick a task, then describe it ("Email anna@example.com that I'll be 10 minutes late", "Dentist tomorrow at 3pm", "Summarize this chat as meeting notes"). The assistant drafts it into a review card:
   - Edit any field, then press **Approve** to run it, or **Reject** to discard it.
   - An approved email is saved to your **Gmail Drafts** if `IMAP_USERNAME` and `IMAP_PASSWORD` (a Gmail app password) are set: nothing is sent until you open it in Gmail and press Send. With SMTP settings it's sent directly instead. With neither, it opens in a new tab in Gmail's compose window (or Outlook.com, or your default mail program; see `EMAIL_COMPOSE`), filled in, so you can check it and press Send.
-  - Events go into **Upcoming** in the sidebar, with a reminder 10 minutes before. Each has an `.ics` file for your calendar app.
+  - Events go into **Upcoming** in the drawer, with a reminder 10 minutes before. Each has an `.ics` file for your calendar app.
   - Documents are saved and downloadable as Markdown.
   - When a draft is ready you get an in-app alert, and a desktop notification if the tab is in the background (allow notifications when the browser asks). Chats with drafts waiting show an amber dot.
   - **On your phone:** set `NOTIFY_PHONE` (SMS through Twilio) or `NTFY_TOPIC` (free push through the ntfy app) to get a text whenever a task needs review, and one more reminder if it's still waiting after `NOTIFY_REMIND_MINUTES`. The text names the task (for example *Email to anna@example.com: "Running late"*). It only reminds you; approving still happens in the app. Settings → *Notifications* has a **Send test notification** button.
@@ -148,9 +150,10 @@ If the computer's address changes, run the script again and restart the frontend
   - *Push to talk:* hold the button, or hold **Space** when not typing.
   - *Hands-free:* just talk. A pause of about 0.8 s ends your turn.
   - *Wake word:* say "Hey Jarvis". A chime confirms. After the reply you have a follow-up window (8 s by default) to keep talking before it waits for the wake word again. *Talk now* skips the wake word.
-- **Settings** (sidebar):
+- **Settings** (in the drawer behind the person icon):
   - Model: provider, model, system prompt, temperature.
   - Voice: speak replies, barge-in.
+  - Pet: cat, dog, bunny or none.
   - Wake word: phrase, sensitivity threshold, follow-up window.
 
 ## Configuration

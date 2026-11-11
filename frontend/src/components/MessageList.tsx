@@ -80,12 +80,12 @@ function MessageBubble({ message }: { message: Message }) {
       <div
         className={`max-w-[85%] rounded-2xl px-4 py-2.5 ${
           isUser
-            ? "bg-indigo-600 text-white"
+            ? "bg-sky-500 text-white"
             : "bg-slate-100 text-slate-900 dark:bg-slate-800 dark:text-slate-100"
         }`}
       >
         {message.source === "voice" && (
-          <div className={`mb-1 flex items-center gap-1 text-[11px] ${isUser ? "text-indigo-200" : "text-slate-500"}`}>
+          <div className={`mb-1 flex items-center gap-1 text-[11px] ${isUser ? "text-sky-100" : "text-slate-500"}`}>
             <MicIcon width={11} height={11} /> voice
           </div>
         )}
@@ -115,8 +115,8 @@ function MessageBubble({ message }: { message: Message }) {
 function TaskRequest({ action }: { action: Action }) {
   return (
     <div className="flex justify-end">
-      <div className="max-w-[85%] rounded-2xl bg-indigo-600 px-4 py-2.5 text-white">
-        <div className="mb-1 text-[11px] text-indigo-200">Task · {KIND_LABELS[action.kind].title.toLowerCase()}</div>
+      <div className="max-w-[85%] rounded-2xl bg-sky-500 px-4 py-2.5 text-white">
+        <div className="mb-1 text-[11px] text-sky-100">Task · {KIND_LABELS[action.kind].title.toLowerCase()}</div>
         <p className="whitespace-pre-wrap break-words">{action.instruction}</p>
       </div>
     </div>
@@ -159,7 +159,7 @@ function MessageFiles({ message }: { message: Message }) {
           <FileIcon width={18} height={18} className="shrink-0" />
           <span className="min-w-0">
             <span className="block truncate text-sm font-medium">{f.name}</span>
-            <span className="block truncate text-xs text-indigo-100">{describeFile(f)}</span>
+            <span className="block truncate text-xs text-sky-100">{describeFile(f)}</span>
           </span>
         </a>
       ))}

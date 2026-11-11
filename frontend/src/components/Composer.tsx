@@ -6,7 +6,7 @@ import { MAX_IMAGES, imageFiles, prepareImage, type PreparedImage } from "../lib
 import { requestNotifyPermission } from "../lib/notify";
 import type { ActionKind, AutomationInfo, UploadedFile } from "../lib/types";
 import { KIND_LABELS } from "./ActionCard";
-import { BoltIcon, FileIcon, ImageIcon, LinkIcon, MicIcon, PaperclipIcon, SendIcon, StopIcon, XIcon } from "./icons";
+import { BoltIcon, FileIcon, ImageIcon, LinkIcon, MicIcon, PaperclipIcon, PawIcon, StopIcon, XIcon } from "./icons";
 
 interface Props {
   streaming: boolean;
@@ -184,7 +184,7 @@ export function Composer({ streaming, drafting, automation, onSend, onTask, onSt
     "flex w-full items-start gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm hover:bg-slate-100 disabled:opacity-40 disabled:hover:bg-transparent dark:hover:bg-slate-700";
 
   return (
-    <div className="safe-bottom mx-auto w-full max-w-3xl px-2 sm:px-4">
+    <div className="safe-bottom w-full px-3">
       <div
         onDragOver={(e) => {
           if (!e.dataTransfer.types.includes("Files")) return;
@@ -199,8 +199,8 @@ export function Composer({ streaming, drafting, automation, onSend, onTask, onSt
           setDragging(false);
           addFiles([...e.dataTransfer.files]);
         }}
-        className={`flex flex-col gap-2 rounded-2xl border bg-white p-2 shadow-sm focus-within:border-indigo-400 dark:bg-slate-900 ${
-          dragging ? "border-indigo-400 ring-2 ring-indigo-300/50" : "border-slate-300 dark:border-slate-700"
+        className={`flex flex-col gap-1.5 rounded-2xl border bg-white px-2.5 pt-2.5 pb-2 focus-within:border-sky-300 dark:bg-slate-900 ${
+          dragging ? "border-sky-400 ring-2 ring-sky-300/50" : "border-slate-200 dark:border-slate-700"
         }`}
       >
         {activeTask && (
@@ -308,7 +308,40 @@ export function Composer({ streaming, drafting, automation, onSend, onTask, onSt
             </button>
           </form>
         )}
-        <div className="flex items-end gap-1 sm:gap-2">
+          <textarea
+            ref={inputRef}
+            rows={1}
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing && !touchKeyboard()) {
+                e.preventDefault();
+                submit();
+              }
+            }}
+            onPaste={(e) => {
+              const pasted = [...e.clipboardData.files];
+              if (pasted.length === 0) return; // plain text paste
+              e.preventDefault();
+              addFiles(pasted);
+            }}
+            placeholder={
+              dictation === "recording"
+                ? "Listening… press the mic again to finish"
+                : activeTask
+                  ? activeTask.placeholder
+                  : docs.length > 0
+                    ? "Ask about the document…"
+                    : images.length > 0
+                      ? "Ask about the picture…"
+                      : touchKeyboard()
+                        ? "Message the assistant…"
+                        : "Enter to send, Shift+Enter for a new line"
+            }
+            className="max-h-48 min-h-[3.5rem] w-full resize-none bg-transparent px-1.5 py-1 outline-none placeholder:text-slate-400 [field-sizing:content]"
+            aria-label="Message"
+          />
+        <div className="flex items-center gap-0.5">
           <input
             ref={fileRef}
             type="file"
@@ -327,7 +360,7 @@ export function Composer({ streaming, drafting, automation, onSend, onTask, onSt
               aria-haspopup="menu"
               title="Tasks: draft an email, schedule, document or workflow"
               aria-label="Tasks"
-              className={`rounded-xl p-2.5 hover:bg-slate-100 dark:hover:bg-slate-800 ${task ? "text-amber-600" : "text-slate-500"}`}
+              className={`rounded-xl p-2 hover:bg-slate-100 dark:hover:bg-slate-800 ${task ? "text-amber-600" : "text-slate-400"}`}
             >
               <BoltIcon />
             </button>
@@ -371,7 +404,7 @@ export function Composer({ streaming, drafting, automation, onSend, onTask, onSt
               aria-haspopup="menu"
               title="Attach pictures or documents (or paste / drop them here)"
               aria-label="Attach"
-              className="rounded-xl p-2.5 text-slate-500 hover:bg-slate-100 disabled:opacity-40 dark:hover:bg-slate-800"
+              className="rounded-xl p-2 text-slate-400 hover:bg-slate-100 disabled:opacity-40 dark:hover:bg-slate-800"
             >
               <PaperclipIcon />
             </button>
@@ -418,46 +451,15 @@ export function Composer({ streaming, drafting, automation, onSend, onTask, onSt
               </div>
             )}
           </div>
-          <textarea
-            ref={inputRef}
-            rows={1}
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing && !touchKeyboard()) {
-                e.preventDefault();
-                submit();
-              }
-            }}
-            onPaste={(e) => {
-              const pasted = [...e.clipboardData.files];
-              if (pasted.length === 0) return; // plain text paste
-              e.preventDefault();
-              addFiles(pasted);
-            }}
-            placeholder={
-              dictation === "recording"
-                ? "Listening… press the mic again to finish"
-                : activeTask
-                  ? activeTask.placeholder
-                  : docs.length > 0
-                    ? "Ask about the document…"
-                    : images.length > 0
-                      ? "Ask about the picture…"
-                      : "Message the assistant…"
-            }
-            className="max-h-48 min-h-[2.5rem] min-w-0 flex-1 resize-none bg-transparent px-2 py-2 outline-none [field-sizing:content]"
-            aria-label="Message"
-          />
           <button
             onClick={toggleDictation}
             disabled={dictation === "transcribing"}
             title={dictation === "recording" ? "Stop dictation" : "Dictate (speech to text)"}
             aria-label="Dictate"
-            className={`relative rounded-xl p-2.5 ${
+            className={`relative rounded-xl p-2 ${
               dictation === "recording"
                 ? "pulse-ring text-red-500"
-                : "text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800"
+                : "text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
             } disabled:opacity-50`}
           >
             <span className="relative">
@@ -465,8 +467,12 @@ export function Composer({ streaming, drafting, automation, onSend, onTask, onSt
             </span>
           </button>
           {streaming ? (
-            <button onClick={onStop} aria-label="Stop generating" className="rounded-xl bg-slate-800 p-2.5 text-white dark:bg-slate-200 dark:text-slate-900">
-              <StopIcon />
+            <button
+              onClick={onStop}
+              aria-label="Stop generating"
+              className="ml-auto flex h-9 w-9 items-center justify-center rounded-full bg-slate-800 text-white dark:bg-slate-200 dark:text-slate-900"
+            >
+              <StopIcon width={18} height={18} />
             </button>
           ) : (
             <button
@@ -474,9 +480,9 @@ export function Composer({ streaming, drafting, automation, onSend, onTask, onSt
               disabled={!canSend}
               title={uploading ? "Wait until the documents are read" : undefined}
               aria-label={task ? "Draft task" : "Send"}
-              className="rounded-xl bg-indigo-600 p-2.5 text-white hover:bg-indigo-500 disabled:opacity-40"
+              className="ml-auto flex h-9 w-9 items-center justify-center rounded-full bg-sky-400 text-white shadow-sm shadow-sky-200 hover:bg-sky-500 disabled:bg-sky-100 disabled:shadow-none dark:shadow-none dark:disabled:bg-sky-950 dark:disabled:text-sky-800"
             >
-              <SendIcon />
+              <PawIcon width={20} height={20} />
             </button>
           )}
         </div>

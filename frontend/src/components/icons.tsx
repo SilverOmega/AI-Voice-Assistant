@@ -19,11 +19,6 @@ export const MicIcon = (p: SVGProps<SVGSVGElement>) => (
     <path d="M5 10a7 7 0 0 0 14 0M12 17v5M8 22h8" />
   </svg>
 );
-export const SendIcon = (p: SVGProps<SVGSVGElement>) => (
-  <svg {...base(p)}>
-    <path d="M22 2 11 13M22 2l-7 20-4-9-9-4 20-7z" />
-  </svg>
-);
 export const StopIcon = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base(p)}>
     <rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor" />
@@ -118,5 +113,37 @@ export const PaperclipIcon = (p: SVGProps<SVGSVGElement>) => (
 export const LinkIcon = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base(p)}>
     <path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7" />
+  </svg>
+);
+export const UserIcon = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}>
+    <circle cx="12" cy="8" r="4" />
+    <path d="M4 21a8 8 0 0 1 16 0" />
+  </svg>
+);
+export const PopOutIcon = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}>
+    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14 21 3" />
+  </svg>
+);
+export const EraserIcon = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}>
+    <path d="m7 21-4.3-4.3a1 1 0 0 1 0-1.4l10-10a1 1 0 0 1 1.4 0l5.6 5.6a1 1 0 0 1 0 1.4L11 21M7 21h14M5.5 12.5l6 6" />
+  </svg>
+);
+export const SparkleIcon = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}>
+    <path d="M12 2.5 13.9 10l7.6 2-7.6 2L12 21.5 10.1 14l-7.6-2 7.6-2z" />
+    <path d="M12 6v12M6 12h12" strokeWidth="1" />
+  </svg>
+);
+/** Filled, for the send button. */
+export const PawIcon = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base({ fill: "currentColor", stroke: "none", ...p })}>
+    <path d="M12 11.5c-3 0-6 3.4-6 6.2 0 1.6 1.2 2.6 2.8 2.6 1.3 0 2-.6 3.2-.6s1.9.6 3.2.6c1.6 0 2.8-1 2.8-2.6 0-2.8-3-6.2-6-6.2z" />
+    <ellipse cx="5.2" cy="10.6" rx="2.1" ry="2.6" transform="rotate(-20 5.2 10.6)" />
+    <ellipse cx="9.4" cy="6.2" rx="2.2" ry="2.8" transform="rotate(-8 9.4 6.2)" />
+    <ellipse cx="14.6" cy="6.2" rx="2.2" ry="2.8" transform="rotate(8 14.6 6.2)" />
+    <ellipse cx="18.8" cy="10.6" rx="2.1" ry="2.6" transform="rotate(20 18.8 10.6)" />
   </svg>
 );

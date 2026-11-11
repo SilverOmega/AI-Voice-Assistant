@@ -30,15 +30,15 @@ export function Sidebar(props: Props) {
   const { sessions, activeId, health, open } = props;
   return (
     <>
-      {open && <div className="fixed inset-0 z-20 bg-black/40 md:hidden" onClick={props.onClose} />}
+      {open && <div className="fixed inset-0 z-20 bg-black/40" onClick={props.onClose} />}
       <aside
-        className={`fixed inset-y-0 left-0 z-30 flex w-72 max-w-[85vw] flex-col border-r pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] max-md:pl-[env(safe-area-inset-left)] border-slate-200 bg-slate-50 transition-transform dark:border-slate-800 dark:bg-slate-900 md:static md:translate-x-0 ${
-          open ? "translate-x-0" : "-translate-x-full"
+        className={`fixed inset-y-0 left-0 z-30 flex w-72 max-w-[85vw] flex-col border-r pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] border-slate-200 bg-slate-50 shadow-xl transition-[translate,visibility] dark:border-slate-800 dark:bg-slate-900 ${
+          open ? "translate-x-0" : "invisible -translate-x-full"
         }`}
       >
         <div className="flex items-center justify-between px-4 py-4">
           <h1 className="text-base font-semibold tracking-tight">Local Assistant</h1>
-          <button className="-mr-1 rounded p-2 md:hidden" onClick={props.onClose} aria-label="Close sidebar">
+          <button className="-mr-1 rounded p-2" onClick={props.onClose} aria-label="Close sidebar">
             <XIcon />
           </button>
         </div>
