@@ -23,6 +23,52 @@ log = logging.getLogger(__name__)
 # Whisper tends to "hear" these in silence or noise.
 _HALLUCINATIONS = {"", "you", "thank you.", "thanks for watching!", "thank you for watching.", "."}
 VOICE_NAME = re.compile(r"^[a-z]{2,3}_[A-Z]{2}-[A-Za-z0-9_]+-(x_low|low|medium|high)$")
+LANGUAGE_CODE = re.compile(r"^[a-z]{2,3}$")
+
+# A Piper voice per language (https://huggingface.co/rhasspy/piper-voices), downloaded the first
+# time it's needed. Languages missing here (Japanese, Korean, Thai...) have no Piper voice.
+PIPER_VOICES = {
+    "ar": "ar_JO-kareem-medium",
+    "ca": "ca_ES-upc_ona-medium",
+    "cs": "cs_CZ-jirka-medium",
+    "da": "da_DK-talesyntese-medium",
+    "de": "de_DE-thorsten-medium",
+    "el": "el_GR-rapunzelina-low",
+    "en": "en_US-lessac-medium",
+    "es": "es_ES-davefx-medium",
+    "fa": "fa_IR-amir-medium",
+    "fi": "fi_FI-harri-medium",
+    "fr": "fr_FR-siwis-medium",
+    "hu": "hu_HU-anna-medium",
+    "is": "is_IS-bui-medium",
+    "it": "it_IT-riccardo-x_low",
+    "ka": "ka_GE-natia-medium",
+    "kk": "kk_KZ-issai-high",
+    "lb": "lb_LU-marylux-medium",
+    "ne": "ne_NP-google-medium",
+    "nl": "nl_BE-nathalie-medium",
+    "no": "no_NO-talesyntese-medium",
+    "pl": "pl_PL-darkman-medium",
+    "pt": "pt_BR-faber-medium",
+    "ro": "ro_RO-mihai-medium",
+    "ru": "ru_RU-irina-medium",
+    "sk": "sk_SK-lili-medium",
+    "sl": "sl_SI-artur-medium",
+    "sr": "sr_RS-serbski_institut-medium",
+    "sv": "sv_SE-nst-medium",
+    "sw": "sw_CD-lanfrica-medium",
+    "tr": "tr_TR-dfki-medium",
+    "uk": "uk_UA-ukrainian_tts-medium",
+    "vi": "vi_VN-vais1000-medium",
+    "zh": "zh_CN-huayan-medium",
+}
+
+
+def piper_voice_for(language: str | None, settings: Settings) -> str | None:
+    """The Piper voice to speak `language` with; None for PIPER_VOICE, "" if Piper has none."""
+    if not language or settings.piper_voice.split("_", 1)[0] == language:
+        return None
+    return {**PIPER_VOICES, **settings.piper_voices}.get(language, "")
 
 
 @dataclass
@@ -46,7 +92,7 @@ class STTEngine(Protocol):
     status: EngineStatus
 
     def load(self) -> None: ...
-    def transcribe(self, audio: np.ndarray | BinaryIO) -> Transcript: ...
+    def transcribe(self, audio: np.ndarray | BinaryIO, language: str | None = None) -> Transcript: ...
 
 
 class TTSEngine(Protocol):
@@ -90,12 +136,20 @@ class WhisperSTT:
             finally:
                 self.status.loading = False
 
-    def transcribe(self, audio: np.ndarray | BinaryIO) -> Transcript:
+    @property
+    def multilingual(self) -> bool:
+        """English-only models (tiny.en, base.en...) can't recognize other languages."""
+        return not self.settings.stt_model.endswith(".en")
+
+    def transcribe(self, audio: np.ndarray | BinaryIO, language: str | None = None) -> Transcript:
+        """`language`: a code such as "vi" for this clip, else STT_LANGUAGE (empty = detect)."""
         self.load()
         started = time.perf_counter()
+        if not self.multilingual:
+            language = "en"
         segments, info = self._model.transcribe(
             audio,
-            language=self.settings.stt_language or None,
+            language=language or self.settings.stt_language or None,
             beam_size=self.settings.stt_beam_size,
             vad_filter=True,
             condition_on_previous_text=False,

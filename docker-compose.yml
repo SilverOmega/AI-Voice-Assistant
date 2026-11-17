@@ -68,12 +68,28 @@ services:
       NOTIFY_REMIND_MINUTES: ${NOTIFY_REMIND_MINUTES:-30}
       APP_URL: ${APP_URL:-}
       APP_PASSCODE: ${APP_PASSCODE:-}
+      WEB_SEARCH: ${WEB_SEARCH:-searxng}
+      SEARXNG_URL: http://searxng:8080
+      BRAVE_API_KEY: ${BRAVE_API_KEY:-}
+      WEB_SEARCH_RESULTS: ${WEB_SEARCH_RESULTS:-5}
     volumes:
       - chat-data:/data
     ports:
       - "127.0.0.1:8001:8001"
     depends_on:
       - ollama
+      - searxng
+    restart: unless-stopped
+
+  # Web search for the chat service: links and related topics under replies. Only the chat
+  # service reaches it; no port is published. Set WEB_SEARCH=off in .env to stop using it.
+  searxng:
+    image: searxng/searxng:${SEARXNG_IMAGE_TAG:-latest}
+    environment:
+      SEARXNG_BASE_URL: http://searxng:8080/
+      SEARXNG_SECRET: ${SEARXNG_SECRET:-assistant-local-search}
+    volumes:
+      - ./services/searxng/settings.yml:/etc/searxng/settings.yml:ro
     restart: unless-stopped
 
   voice:
@@ -86,6 +102,7 @@ services:
       STT_COMPUTE_TYPE: int8
       TTS_ENGINE: ${TTS_ENGINE:-piper}
       PIPER_VOICE: ${PIPER_VOICE:-en_US-lessac-medium}
+      PIPER_VOICES: ${PIPER_VOICES:-}
       VAD_SILENCE_MS: ${VAD_SILENCE_MS:-800}
     volumes:
       - voice-models:/models

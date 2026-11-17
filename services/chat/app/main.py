@@ -17,6 +17,7 @@ from .notifier import Notifier
 from .repository import Repository
 from .routes import router
 from .schemas import RuntimeConfig
+from .search import engine_from_settings
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
@@ -41,7 +42,8 @@ def create_app(
         app.state.auth = auth.Auth(repo, settings.app_passcode)
         app.state.notifier = Notifier(settings)
         app.state.notifications = NotificationCenter(repo, app.state.notifier)
-        app.state.chat = ChatService(repo, providers, settings, runtime, app.state.notifications)
+        search = engine_from_settings(settings)
+        app.state.chat = ChatService(repo, providers, settings, runtime, app.state.notifications, search)
         app.state.chat.start_warm_up()
         app.state.automation = Automation(repo, settings)
         reminders = asyncio.create_task(
@@ -56,6 +58,8 @@ def create_app(
             await app.state.notifier.aclose()
             await app.state.automation.aclose()
             await app.state.chat.aclose()
+            if search:
+                await search.aclose()
             await providers.aclose()
             await repo.close()
 

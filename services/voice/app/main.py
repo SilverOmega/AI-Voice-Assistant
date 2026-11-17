@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 
 from .chat_client import ChatClient
 from .config import Settings, get_settings
-from .engines import STTEngine, TTSEngine, WhisperSTT, build_tts
+from .engines import LANGUAGE_CODE, STTEngine, TTSEngine, WhisperSTT, build_tts
 from .pipeline import VoiceSession
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -76,15 +76,22 @@ def create_app(
         }
 
     @app.post("/api/stt")
-    async def speech_to_text(request: Request, file: UploadFile = File(...)) -> dict:
-        """Transcribe an uploaded clip (any format ffmpeg/PyAV can decode, e.g. webm/opus)."""
+    async def speech_to_text(
+        request: Request, file: UploadFile = File(...), language: str | None = None
+    ) -> dict:
+        """Transcribe an uploaded clip (any format ffmpeg/PyAV can decode, e.g. webm/opus).
+
+        `language`: the code of the language spoken ("vi"); omitted = STT_LANGUAGE.
+        """
+        if language is not None and not LANGUAGE_CODE.match(language):
+            raise HTTPException(422, "language must be a language code such as en or vi")
         data = await file.read(settings.stt_max_upload_mb * 1024 * 1024 + 1)
         if len(data) > settings.stt_max_upload_mb * 1024 * 1024:
             raise HTTPException(413, f"Audio exceeds {settings.stt_max_upload_mb} MB")
         if not data:
             raise HTTPException(400, "Empty audio upload")
         try:
-            result = await asyncio.to_thread(request.app.state.stt.transcribe, io.BytesIO(data))
+            result = await asyncio.to_thread(request.app.state.stt.transcribe, io.BytesIO(data), language)
         except Exception as exc:
             log.exception("transcription failed")
             raise HTTPException(422, f"Could not transcribe audio: {exc}") from exc

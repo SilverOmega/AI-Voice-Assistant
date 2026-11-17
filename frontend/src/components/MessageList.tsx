@@ -1,11 +1,13 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { api } from "../lib/api";
 import { describeFile } from "../lib/files";
 import type { Action, AutomationInfo, Message } from "../lib/types";
 import { ActionCard, KIND_LABELS } from "./ActionCard";
-import { FileIcon, MicIcon } from "./icons";
+import { FileIcon, MicIcon, TranslateIcon } from "./icons";
+import { MessageTranslation, SelectionTranslator } from "./Translate";
+import { WebSources } from "./WebSources";
 
 interface Props {
   messages: Message[];
@@ -14,11 +16,26 @@ interface Props {
   onApprove: (id: string, payload: Record<string, unknown>) => Promise<unknown>;
   onReject: (id: string) => Promise<void>;
   emptyHint: string;
+  /** The language this device's reader translates messages into. */
+  translateTo: string;
+  onTranslateTo: (language: string) => void;
+  /** Ask about a related topic from a web search; undefined while a reply is being written. */
+  onAsk?: (topic: string) => void;
 }
 
 type Item = { at: string; message: Message } | { at: string; action: Action };
 
-export function MessageList({ messages, actions, automation, onApprove, onReject, emptyHint }: Props) {
+export function MessageList({
+  messages,
+  actions,
+  automation,
+  onApprove,
+  onReject,
+  emptyHint,
+  translateTo,
+  onTranslateTo,
+  onAsk,
+}: Props) {
   const endRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const last = messages[messages.length - 1];
@@ -34,7 +51,7 @@ export function MessageList({ messages, actions, automation, onApprove, onReject
     if (!el) return;
     const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 160;
     if (nearBottom || last?.role === "user") endRef.current?.scrollIntoView({ block: "end" });
-  }, [messages.length, last?.content, last?.role, actions.length, lastAction?.status]);
+  }, [messages.length, last?.content, last?.role, last?.searching, last?.web, actions.length, lastAction?.status]);
 
   if (items.length === 0) {
     return (
@@ -52,7 +69,7 @@ export function MessageList({ messages, actions, automation, onApprove, onReject
       <div className="mx-auto max-w-3xl space-y-5 px-4 py-6">
         {items.map((item) =>
           "message" in item ? (
-            <MessageBubble key={item.message.id} message={item.message} />
+            <MessageBubble key={item.message.id} message={item.message} translateTo={translateTo} onAsk={onAsk} />
           ) : (
             <div key={item.action.id} className="space-y-2">
               <TaskRequest action={item.action} />
@@ -68,15 +85,26 @@ export function MessageList({ messages, actions, automation, onApprove, onReject
         )}
         <div ref={endRef} />
       </div>
+      <SelectionTranslator containerRef={containerRef} target={translateTo} onTarget={onTranslateTo} />
     </div>
   );
 }
 
-function MessageBubble({ message }: { message: Message }) {
+function MessageBubble({
+  message,
+  translateTo,
+  onAsk,
+}: {
+  message: Message;
+  translateTo: string;
+  onAsk?: (topic: string) => void;
+}) {
   const isUser = message.role === "user";
   const thinking = message.pending && !message.content && !message.error;
+  const [translated, setTranslated] = useState(false);
+  const canTranslate = !message.pending && message.content.trim().length > 0;
   return (
-    <div className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
+    <div className={`group flex flex-col ${isUser ? "items-end" : "items-start"}`}>
       <div
         className={`max-w-[85%] rounded-2xl px-4 py-2.5 ${
           isUser
@@ -106,7 +134,30 @@ function MessageBubble({ message }: { message: Message }) {
             {message.error}
           </p>
         )}
+        {canTranslate && (
+          <MessageTranslation
+            text={message.content}
+            target={translateTo}
+            markdown={!isUser}
+            tone={isUser ? "user" : "assistant"}
+            open={translated}
+          />
+        )}
       </div>
+      {canTranslate && (
+        <button
+          onClick={() => setTranslated((t) => !t)}
+          aria-pressed={translated}
+          title={translated ? "Hide the translation" : `Translate into ${translateTo}`}
+          className={`mt-0.5 flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-slate-400 hover:bg-slate-100 hover:text-slate-700 focus-visible:opacity-100 pointer-coarse:py-1 pointer-coarse:text-xs pointer-coarse:opacity-100 dark:hover:bg-slate-800 dark:hover:text-slate-200 ${
+            translated ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+          }`}
+        >
+          <TranslateIcon width={11} height={11} />
+          {translated ? "Show original only" : "Translate"}
+        </button>
+      )}
+      {!isUser && <WebSources web={message.web} searching={message.searching} onAsk={onAsk} />}
     </div>
   );
 }

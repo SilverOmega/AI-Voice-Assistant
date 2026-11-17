@@ -11,12 +11,15 @@ import { Toasts, type Toast } from "./components/Toasts";
 import { VoiceBar } from "./components/VoiceBar";
 import { useChat } from "./hooks/useChat";
 import { useHealth } from "./hooks/useHealth";
+import { useLanguagePrefs } from "./hooks/useLanguage";
 import { useNotifications } from "./hooks/useNotifications";
 import { usePet } from "./hooks/usePet";
 import { useSchedule } from "./hooks/useSchedule";
 import { useVoice, useVoicePrefs } from "./hooks/useVoice";
+import { useWebSearch } from "./hooks/useWebSearch";
 import { api } from "./lib/api";
 import { MAX_IMAGES } from "./lib/images";
+import { languageCode } from "./lib/languages";
 import { formatWhen, notifyDesktop, onNotificationOpen } from "./lib/notify";
 import type { Action, AuthStatus, AutomationInfo, CalendarEvent, LiveNotification, VoiceServerMessage } from "./lib/types";
 
@@ -91,7 +94,9 @@ export default function App({ auth, onSignedOut }: Props) {
     notifyDesktop(`Coming up: ${event.title}`, formatWhen(event.start));
   }, []);
 
-  const chat = useChat({ onActionChange });
+  const [language, updateLanguage] = useLanguagePrefs();
+  const webSearch = useWebSearch();
+  const chat = useChat({ onActionChange, language: language.reply, search: webSearch.enabled });
   const schedule = useSchedule(onRemind);
   selectRef.current = chat.selectSession;
   useEffect(() => onNotificationOpen((id) => selectRef.current(id)), []);
@@ -106,6 +111,11 @@ export default function App({ auth, onSignedOut }: Props) {
   refreshScheduleRef.current = schedule.refresh;
   const health = useHealth();
   const [prefs, updatePrefs] = useVoicePrefs();
+  // Voice talks in the reply language: speech recognition, the reply and the voice.
+  const voicePrefs = useMemo(
+    () => ({ ...prefs, language: language.reply, search: webSearch.enabled }),
+    [prefs, language.reply, webSearch.enabled],
+  );
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [pet, setPet] = usePet();
@@ -154,7 +164,7 @@ export default function App({ auth, onSignedOut }: Props) {
     },
     [voiceEvents],
   );
-  const voice = useVoice(chat.activeId, prefs, onVoiceMessage);
+  const voice = useVoice(chat.activeId, voicePrefs, onVoiceMessage);
 
   const title = chat.sessions.find((s) => s.id === chat.activeId)?.title ?? "New chat";
   // The assistant can't answer: the chat service is unreachable, or its language model is down.
@@ -321,6 +331,9 @@ export default function App({ auth, onSignedOut }: Props) {
               onApprove={chat.approveAction}
               onReject={chat.rejectAction}
               emptyHint="Type a message, dictate with the mic, or talk using the voice controls."
+              translateTo={language.translateTo}
+              onTranslateTo={(translateTo) => updateLanguage({ translateTo })}
+              onAsk={chat.streaming ? undefined : (topic) => void chat.send(topic)}
             />
           </div>
 
@@ -354,6 +367,8 @@ export default function App({ auth, onSignedOut }: Props) {
             onTask={chat.draftTask}
             onStop={chat.stop}
             onError={chat.setError}
+            dictationLanguage={language.reply ? languageCode(language.reply) : null}
+            webSearch={webSearch}
             onPhotoLimit={(attempted) =>
               api
                 .reportPhotoLimit(attempted)
@@ -378,6 +393,8 @@ export default function App({ auth, onSignedOut }: Props) {
         onSignedOut={onSignedOut}
         pet={pet}
         onPet={setPet}
+        language={language}
+        onLanguage={updateLanguage}
       />
     </div>
   );

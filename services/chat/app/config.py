@@ -44,6 +44,14 @@ class Settings(BaseSettings):
     anthropic_effort: Literal["low", "medium", "high", "xhigh", "max"] = "low"
     anthropic_fallbacks: bool = True
 
+    # Web search for chat turns: links and related topics under replies, and results the model
+    # answers from. "searxng" uses the SearXNG container in docker-compose (no account);
+    # "brave" the Brave Search API (BRAVE_API_KEY); "off" turns it off.
+    web_search: Literal["searxng", "brave", "off"] = "searxng"
+    searxng_url: str = "http://localhost:8888"
+    brave_api_key: str = ""
+    web_search_results: int = Field(default=5, ge=1, le=10)
+
     # Task automation. Approved emails are sent over SMTP if it's set up; otherwise saved to the
     # mailbox's Drafts folder over IMAP if that's set up; otherwise they open ready to send in
     # Gmail or Outlook on the web, or in the computer's default mail app (mailto:).

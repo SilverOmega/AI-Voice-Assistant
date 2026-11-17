@@ -18,6 +18,7 @@ import type {
   SessionDetail,
   Source,
   UploadedFile,
+  WebResults,
 } from "./types";
 
 export const CHAT_BASE = "/chat";
@@ -103,6 +104,12 @@ export const api = {
   listModels: () =>
     request<{ provider: string; default: string; models: string[] }>(`${CHAT_BASE}/api/models`),
   imageUrl: (id: string) => `${CHAT_BASE}/api/images/${id}`,
+  /** Translate chat text into any language, by the active model. Nothing is saved. */
+  translate: (text: string, target: string) =>
+    request<{ translation: string; target: string }>(`${CHAT_BASE}/api/translate`, {
+      method: "POST",
+      body: JSON.stringify({ text, target }),
+    }),
 
   // ---- documents: uploaded first, then sent with a message by id -------------
   /** The server reads the text right away and refuses files it can't read, with the reason. */
@@ -167,11 +174,13 @@ export const api = {
   deleteEvent: (id: string) => request<void>(`${CHAT_BASE}/api/events/${id}`, { method: "DELETE" }),
 
   // ---- voice / wake-word services --------------------------------------
-  transcribe: async (audio: Blob): Promise<{ text: string; elapsed: number }> => {
+  /** `language`: the code of the language spoken ("vi"); null = the server's STT_LANGUAGE. */
+  transcribe: async (audio: Blob, language: string | null = null): Promise<{ text: string; elapsed: number }> => {
     const form = new FormData();
     const ext = audio.type.includes("ogg") ? "ogg" : audio.type.includes("mp4") ? "m4a" : "webm";
     form.append("file", audio, `dictation.${ext}`);
-    const resp = await fetch(`${VOICE_BASE}/api/stt`, { method: "POST", body: form });
+    const query = language ? `?language=${encodeURIComponent(language)}` : "";
+    const resp = await fetch(`${VOICE_BASE}/api/stt${query}`, { method: "POST", body: form });
     if (!resp.ok) throw await failure(resp);
     return resp.json();
   },
@@ -194,11 +203,18 @@ export const api = {
 export interface StreamHandlers {
   onStart?: (data: { user_message: Message; provider: string; model: string }) => void;
   onToken: (text: string) => void;
+  /** A web search for the message started. */
+  onSearching?: (query: string) => void;
+  /** What it found; `error` if it failed (the reply still comes, from the model alone). */
+  onWeb?: (web: WebResults & { error?: string }) => void;
   onDone?: (message: Message | null) => void;
   onError?: (message: string) => void;
 }
 
-/** Send a message and stream the reply. Resolves when the stream ends; abort via `signal`. */
+/**
+ * Send a message and stream the reply. Resolves when the stream ends; abort via `signal`.
+ * `language`: the language to reply in ("Vietnamese"); empty = the model follows the user.
+ */
 export async function streamMessage(
   sessionId: string,
   content: string,
@@ -207,11 +223,13 @@ export async function streamMessage(
   source: Source = "text",
   images: ImageUpload[] = [],
   files: string[] = [],
+  language = "",
+  search = false,
 ): Promise<void> {
   const resp = await fetch(`${CHAT_BASE}/api/sessions/${sessionId}/messages/stream`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ content, source, images, files }),
+    body: JSON.stringify({ content, source, images, files, search, ...(language ? { language } : {}) }),
     signal,
   });
   if (!resp.ok || !resp.body) throw await failure(resp);
@@ -225,6 +243,8 @@ export async function streamMessage(
       const payload = JSON.parse(data);
       if (event === "start") handlers.onStart?.(payload);
       else if (event === "token") handlers.onToken(payload.text);
+      else if (event === "searching") handlers.onSearching?.(payload.query);
+      else if (event === "web") handlers.onWeb?.(payload);
       else if (event === "done") handlers.onDone?.(payload.message);
       else if (event === "error") handlers.onError?.(payload.message);
     }

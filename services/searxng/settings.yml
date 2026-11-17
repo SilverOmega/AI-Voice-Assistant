@@ -1,0 +1,26 @@
+# SearXNG for the assistant's web search. Only the chat service reaches it (no port is published).
+# Full reference: https://docs.searxng.org/admin/settings/
+use_default_settings: true
+
+general:
+  instance_name: "Assistant search"
+
+server:
+  # Overridden by SEARXNG_SECRET (docker-compose.yml).
+  secret_key: "set-by-SEARXNG_SECRET"
+  # The limiter blocks bursts from one client; here the only client is the chat service.
+  limiter: false
+  image_proxy: false
+  public_instance: false
+
+search:
+  safe_search: 1
+  autocomplete: ""
+  # The chat service asks for JSON.
+  formats:
+    - html
+    - json
+
+outgoing:
+  request_timeout: 4.0
+  max_request_timeout: 8.0

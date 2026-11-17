@@ -23,7 +23,9 @@ from .llm import (
 )
 from .notifications import NotificationCenter
 from .repository import Repository
-from .schemas import ActionOut, FileRef, MessageOut, RuntimeConfig, Source
+from .schemas import ActionOut, FileRef, MessageOut, RuntimeConfig, Source, WebResults
+from .search import SearchEngine, SearchError, results_context, search_query, worth_searching
+from .translate import TranslationCache, reply_language_instruction, translate
 
 log = logging.getLogger(__name__)
 
@@ -75,13 +77,16 @@ class ChatService:
         settings: Settings,
         runtime: RuntimeConfig,
         notifications: NotificationCenter | None = None,
+        search: SearchEngine | None = None,
     ):
         self.repo = repo
         self.notifications = notifications
+        self.search = search
         self.registry = registry
         self.settings = settings
         self.runtime = runtime
         self._locks: dict[str, asyncio.Lock] = {}
+        self._translations = TranslationCache()
         self._warm_up_task: asyncio.Task | None = None
 
     def resolved_model(self) -> str:
@@ -118,14 +123,20 @@ class ChatService:
         source: Source = "text",
         images: Sequence[ImageData] = (),
         files: Sequence[FileRef] = (),
+        language: str | None = None,
+        search: bool = False,
     ) -> AsyncIterator[ChatEvent]:
-        """Run one turn. Raises SessionNotFound / SessionBusy before the first event."""
+        """Run one turn. Raises SessionNotFound / SessionBusy before the first event.
+
+        `language`: the language to reply in; None leaves it to the model (it follows the user).
+        `search`: look the message up on the web first and answer from the results.
+        """
         if await self.repo.get_session(session_id) is None:
             raise SessionNotFound(session_id)
         lock = self._lock_for(session_id)
         if lock.locked():
             raise SessionBusy(session_id)
-        return self._run_turn(lock, session_id, content.strip(), source, images, files)
+        return self._run_turn(lock, session_id, content.strip(), source, images, files, language, search)
 
     async def _run_turn(
         self,
@@ -135,28 +146,41 @@ class ChatService:
         source: Source,
         images: Sequence[ImageData],
         files: Sequence[FileRef],
+        language: str | None,
+        search: bool,
     ) -> AsyncIterator[ChatEvent]:
         parts: list[str] = []
         saved: MessageOut | None = None
+        web: WebResults | None = None
         # Acquired inside the generator so an un-iterated generator can never leak the lock.
         await lock.acquire()
         try:
             user_msg = await self.repo.add_message(session_id, "user", content, source, images, files)
             turns = await self._history_turns(session_id)
             provider = self.registry.get(self.runtime.provider)
-            params = GenerationParams(
-                model=self.resolved_model(),
-                system=self.runtime.system_prompt,
-                temperature=self.runtime.temperature,
-                max_tokens=self.settings.max_output_tokens,
-            )
+            model = self.resolved_model()
             yield ChatEvent(
                 "start",
-                {
-                    "user_message": user_msg.model_dump(mode="json"),
-                    "provider": provider.name,
-                    "model": params.model,
-                },
+                {"user_message": user_msg.model_dump(mode="json"), "provider": provider.name, "model": model},
+            )
+            system = self.runtime.system_prompt
+            # Pictures and documents are what the message is about: the web would only add noise.
+            if search and self.search and not images and not files and worth_searching(content):
+                query = search_query(content)
+                yield ChatEvent("searching", {"query": query})
+                web, failure = await self._web_search(query)
+                if web is None:
+                    yield ChatEvent("web", {"query": query, "links": [], "related": [], "error": failure})
+                else:
+                    yield ChatEvent("web", web.model_dump(mode="json"))
+                    system = f"{system}\n\n{results_context(web, spoken=source == 'voice')}".strip()
+            if language:
+                system = f"{system}\n\n{reply_language_instruction(language)}".strip()
+            params = GenerationParams(
+                model=model,
+                system=system,
+                temperature=self.runtime.temperature,
+                max_tokens=self.settings.max_output_tokens,
             )
             started = time.perf_counter()
             # aclosing: if our consumer goes away mid-reply, close the provider stream now
@@ -167,20 +191,20 @@ class ChatService:
                     yield ChatEvent("token", {"text": text})
                     if text == TRUNCATED_NOTE:
                         await self._notify_truncated(session_id, params.max_tokens)
-            saved = await self._save(session_id, parts, source)
+            saved = await self._save(session_id, parts, source, web)
             log.info(
                 "turn complete session=%s provider=%s chars=%d secs=%.2f",
                 session_id, provider.name, len("".join(parts)), time.perf_counter() - started,
             )
             yield ChatEvent("done", {"message": saved.model_dump(mode="json") if saved else None})
         except LLMError as exc:
-            saved = await self._save(session_id, parts, source)
+            saved = await self._save(session_id, parts, source, web)
             if isinstance(exc, LLMAuthError):
                 await self._notify_rejected(exc, session_id)
             yield ChatEvent("error", {"message": str(exc)})
         except Exception:
             log.exception("unexpected error during chat turn")
-            saved = await self._save(session_id, parts, source)
+            saved = await self._save(session_id, parts, source, web)
             yield ChatEvent("error", {"message": "Unexpected server error while generating a reply."})
         finally:
             try:
@@ -188,7 +212,7 @@ class ChatService:
                 # Under anyio (Starlette) cancellation is level-triggered, so this await can
                 # itself raise CancelledError; the shield lets the save finish regardless.
                 if saved is None and parts:
-                    await asyncio.shield(self._save(session_id, parts, source))
+                    await asyncio.shield(self._save(session_id, parts, source, web))
             finally:
                 lock.release()
 
@@ -210,13 +234,34 @@ class ChatService:
             [ChatTurn(m.role, contents[m.id], tuple(pictures.get(m.id, ()))) for m in history]
         )
 
-    async def _save(self, session_id: str, parts: list[str], source: Source) -> MessageOut | None:
+    async def _save(
+        self, session_id: str, parts: list[str], source: Source, web: WebResults | None = None
+    ) -> MessageOut | None:
         text = "".join(parts).strip()
         if not text:
             return None
-        msg = await self.repo.add_message(session_id, "assistant", text, source)
+        found = web if web and (web.links or web.related) else None
+        msg = await self.repo.add_message(session_id, "assistant", text, source, web=found)
         parts.clear()
         return msg
+
+    async def _web_search(self, query: str) -> tuple[WebResults | None, str]:
+        """(results, "") or (None, why it failed). A failed search never stops the reply."""
+        assert self.search is not None
+        started = time.perf_counter()
+        try:
+            web = await self.search.search(query, self.settings.web_search_results)
+        except SearchError as exc:
+            log.warning("web search failed: %s", exc)
+            return None, f"Web search didn't work: {exc}"
+        except Exception:
+            log.exception("web search failed")
+            return None, "Web search didn't work, so this reply comes from the model alone."
+        log.info(
+            "web search via %s: %d links, %d related in %.1fs",
+            self.search.name, len(web.links), len(web.related), time.perf_counter() - started,
+        )
+        return web, ""
 
     async def draft_action(
         self, session_id: str, kind: str, instruction: str, now: str
@@ -247,6 +292,27 @@ class ChatService:
             log.info("drafted %s action in %.1fs", kind, time.perf_counter() - started)
             return await self.repo.add_action(session_id, kind, instruction, clean_draft(kind, data))
 
+    async def translate(self, text: str, target: str) -> str:
+        """`text` in the `target` language. Not part of any conversation, so no session lock:
+        someone following a chat can translate while a reply is still being written."""
+        model = self.resolved_model()
+        key = (self.runtime.provider, model, target.casefold(), text)
+        cached = self._translations.get(key)
+        if cached is not None:
+            return cached
+        provider = self.registry.get(self.runtime.provider)
+        started = time.perf_counter()
+        try:
+            result = await translate(provider, model, text, target, self.settings.max_output_tokens)
+        except LLMAuthError as exc:
+            await self._notify_rejected(exc, None)
+            raise
+        if not result:
+            raise LLMError("The model returned an empty translation. Try again.")
+        log.info("translated %d chars into %s in %.1fs", len(text), target, time.perf_counter() - started)
+        self._translations.put(key, result)
+        return result
+
     async def _notify_truncated(self, session_id: str, max_tokens: int) -> None:
         if self.notifications:
             await self.notifications.emit(
@@ -258,7 +324,7 @@ class ChatService:
                 session_id=session_id,
             )
 
-    async def _notify_rejected(self, exc: LLMAuthError, session_id: str) -> None:
+    async def _notify_rejected(self, exc: LLMAuthError, session_id: str | None) -> None:
         if self.notifications:
             await self.notifications.emit(
                 "credentials", "API key rejected", str(exc), level="error", session_id=session_id
@@ -271,10 +337,12 @@ class ChatService:
         source: Source = "text",
         images: Sequence[ImageData] = (),
         files: Sequence[FileRef] = (),
+        language: str | None = None,
+        search: bool = False,
     ) -> dict:
         """Non-streaming variant: collect the whole turn."""
         user_message = assistant_message = None
-        events = await self.stream_reply(session_id, content, source, images, files)
+        events = await self.stream_reply(session_id, content, source, images, files, language, search)
         async with aclosing(events):
             async for event in events:
                 if event.event == "start":

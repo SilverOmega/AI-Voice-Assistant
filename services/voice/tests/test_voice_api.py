@@ -140,3 +140,96 @@ def test_start_message_mid_turn_does_not_reset_state():
             msgs, _ = collect(ws)
     assert {"type": "state", "state": "listening"} not in msgs
     assert "ready" not in types(msgs)
+
+
+def test_language_reaches_stt_chat_and_voice(client, backend, fakes):
+    stt, tts = fakes
+    with client.websocket_connect("/ws/voice") as ws:
+        ws.send_text(json.dumps({"type": "start", "mode": "ptt", "language": "Vietnamese", "language_code": "vi"}))
+        collect(ws, until="state")
+        ws.send_text(json.dumps({"type": "ptt_start"}))
+        ws.send_bytes(tone(0.5))
+        ws.send_text(json.dumps({"type": "ptt_end"}))
+        collect(ws)
+    assert stt.languages == ["vi"]
+    assert backend.received[-1]["language"] == "Vietnamese"
+    assert set(tts.voices) == {"vi_VN-vais1000-medium"}
+
+
+def test_language_without_piper_voice_is_spoken_by_the_browser(client, backend, fakes):
+    _, tts = fakes
+    with client.websocket_connect("/ws/voice") as ws:
+        ws.send_text(json.dumps({"type": "start", "language": "Japanese", "language_code": "ja"}))
+        collect(ws, until="state")
+        ws.send_text(json.dumps({"type": "text", "text": "hi"}))
+        msgs, audio = collect(ws)
+    assert audio == [] and tts.spoken == []
+    speak = [m for m in msgs if m["type"] == "speak"]
+    assert [m["lang"] for m in speak] == ["ja", "ja"]
+
+
+def test_language_voice_that_fails_falls_back_to_the_browser(client, backend, fakes):
+    _, tts = fakes
+    tts.broken_voices.add("de_DE-thorsten-medium")
+    with client.websocket_connect("/ws/voice") as ws:
+        ws.send_text(json.dumps({"type": "start", "language": "German", "language_code": "de"}))
+        collect(ws, until="state")
+        ws.send_text(json.dumps({"type": "text", "text": "hi"}))
+        msgs, audio = collect(ws)
+    assert audio == []
+    assert sum(m["type"] == "error" for m in msgs) == 1
+    assert [m["text"] for m in msgs if m["type"] == "speak"] == ["It is noon.", "Have a great lunch!"]
+
+
+def test_english_and_bad_language_codes_use_the_defaults(client, backend, fakes):
+    stt, tts = fakes
+    with client.websocket_connect("/ws/voice") as ws:
+        ws.send_text(json.dumps({"type": "start", "language": "English", "language_code": "en"}))
+        collect(ws, until="state")
+        ws.send_text(json.dumps({"type": "text", "text": "hi"}))
+        collect(ws)
+        ws.send_text(json.dumps({"type": "start", "language": "", "language_code": "../x"}))
+        collect(ws, until="state")
+        ws.send_text(json.dumps({"type": "text", "text": "hi"}))
+        collect(ws)
+    assert tts.voices == [None] * 4  # PIPER_VOICE is already English
+    assert backend.received[0]["language"] == "English"
+    assert "language" not in backend.received[1]
+
+
+def test_english_only_stt_model_warns_once(client, fakes):
+    stt, _ = fakes
+    stt.multilingual = False
+    with client.websocket_connect("/ws/voice") as ws:
+        ws.send_text(json.dumps({"type": "start", "language": "French", "language_code": "fr"}))
+        error = json.loads(ws.receive_text())
+        assert error["type"] == "error" and "only understands English" in error["message"]
+        assert json.loads(ws.receive_text())["type"] == "ready"
+        collect(ws, until="state")
+        ws.send_text(json.dumps({"type": "start", "language": "French", "language_code": "fr"}))
+        assert json.loads(ws.receive_text())["type"] == "ready"
+
+
+def test_dictation_language(client, fakes):
+    stt, _ = fakes
+    clip = {"file": ("a.webm", b"fake-bytes", "audio/webm")}
+    assert client.post("/api/stt?language=vi", files=clip).status_code == 200
+    assert stt.languages[-1] == "vi"
+    assert client.post("/api/stt?language=vi-VN!", files=clip).status_code == 422
+
+
+def test_web_search_choice_reaches_the_chat_service(client, backend, fakes):
+    with client.websocket_connect("/ws/voice") as ws:
+        ws.send_text(json.dumps({"type": "start", "search": True}))
+        collect(ws, until="state")
+        ws.send_text(json.dumps({"type": "text", "text": "who won the match"}))
+        msgs, _ = collect(ws)
+        # Search events are for the chat; the spoken reply is unchanged.
+        assert "".join(m["text"] for m in msgs if m["type"] == "token").strip() == "It is noon. Have a great lunch!"
+        assert backend.received[-1]["search"] is True
+
+        ws.send_text(json.dumps({"type": "start", "search": "yes"}))  # only true turns it on
+        collect(ws, until="state")
+        ws.send_text(json.dumps({"type": "text", "text": "and tomorrow"}))
+        collect(ws)
+    assert "search" not in backend.received[-1]

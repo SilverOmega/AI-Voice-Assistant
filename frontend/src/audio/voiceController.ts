@@ -1,4 +1,5 @@
 import { wsUrl, VOICE_BASE, WAKEWORD_BASE } from "../lib/api";
+import { languageCode } from "../lib/languages";
 import type { VoicePrefs, VoiceServerMessage, VoiceState, WakeServerMessage } from "../lib/types";
 import { MicCapture } from "./mic";
 import { SpeechPlayer } from "./player";
@@ -199,6 +200,9 @@ export class VoiceController {
       mode: this.prefs.mode === "ptt" ? "ptt" : "vad",
       tts: this.prefs.speakReplies,
       barge_in: this.prefs.bargeIn,
+      language: this.prefs.language || null,
+      language_code: this.prefs.language ? languageCode(this.prefs.language) : null,
+      search: Boolean(this.prefs.search),
     });
   }
 
@@ -226,7 +230,7 @@ export class VoiceController {
         }
         break;
       case "speak":
-        this.player.speakText(msg.text);
+        this.player.speakText(msg.text, msg.lang);
         break;
       case "interrupted":
         this.player.stop();

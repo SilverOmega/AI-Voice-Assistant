@@ -30,13 +30,22 @@ class ChatClient:
         except httpx.HTTPError as exc:
             raise ChatClientError(f"Chat service unavailable: {exc}") from exc
 
-    async def stream(self, session_id: str, content: str) -> AsyncIterator[tuple[str, dict]]:
-        """Yield (event, data) pairs from the chat service SSE stream."""
+    async def stream(
+        self, session_id: str, content: str, language: str | None = None, search: bool = False
+    ) -> AsyncIterator[tuple[str, dict]]:
+        """Yield (event, data) pairs from the chat service SSE stream.
+
+        `language`: the language to reply in, e.g. "Vietnamese"; None lets the model choose.
+        `search`: look the question up on the web first (the chat service skips small talk).
+        """
         url = f"/api/sessions/{session_id}/messages/stream"
+        body = {"content": content, "source": "voice"}
+        if language:
+            body["language"] = language
+        if search:
+            body["search"] = True
         try:
-            async with self._client.stream(
-                "POST", url, json={"content": content, "source": "voice"}
-            ) as resp:
+            async with self._client.stream("POST", url, json=body) as resp:
                 if resp.status_code >= 400:
                     body = (await resp.aread()).decode(errors="replace")
                     try:

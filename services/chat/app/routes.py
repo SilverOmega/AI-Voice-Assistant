@@ -49,6 +49,8 @@ from .schemas import (
     SessionDetail,
     SessionOut,
     SessionUpdate,
+    TranslateOut,
+    TranslateRequest,
 )
 
 router = APIRouter()
@@ -110,6 +112,7 @@ async def _config_out(request: Request) -> ConfigOut:
         model=svc.resolved_model(),
         available_providers=svc.registry.names,
         provider_status={svc.runtime.provider: detail},
+        web_search=svc.search.name if svc.search else "",
     )
 
 
@@ -197,7 +200,9 @@ async def _start_turn(request: Request, session_id: str, body: ChatRequest):
     images = [img.to_image_data() for img in body.images]
     files = await _attached_files(request, body)
     try:
-        return await _svc(request).stream_reply(session_id, body.content, body.source, images, files)
+        return await _svc(request).stream_reply(
+            session_id, body.content, body.source, images, files, body.language, body.search
+        )
     except SessionNotFound:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session not found") from None
     except SessionBusy:
@@ -231,6 +236,7 @@ async def stream_message(session_id: str, body: ChatRequest, request: Request) -
     """Send a message and stream the reply as Server-Sent Events.
 
     Events: `start` {user_message, provider, model}, `token` {text}, `done` {message}, `error` {message}.
+    With `search`: `searching` {query}, then `web` {query, links, related, error?} before the tokens.
     """
     events = await _start_turn(request, session_id, body)
     return ClosingStreamingResponse(
@@ -245,7 +251,9 @@ async def send_message(session_id: str, body: ChatRequest, request: Request) -> 
     images = [img.to_image_data() for img in body.images]
     files = await _attached_files(request, body)
     try:
-        result = await _svc(request).reply(session_id, body.content, body.source, images, files)
+        result = await _svc(request).reply(
+            session_id, body.content, body.source, images, files, body.language, body.search
+        )
     except SessionNotFound:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session not found") from None
     except SessionBusy:
@@ -255,6 +263,36 @@ async def send_message(session_id: str, body: ChatRequest, request: Request) -> 
     except LLMError as exc:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
     return ChatResponse(**result)
+
+
+@router.post("/api/translate", response_model=TranslateOut)
+async def translate_text(body: TranslateRequest, request: Request) -> TranslateOut:
+    """Translate chat text (a message or a selected part of one) into any language.
+
+    Done by the active model and not saved to any conversation.
+    """
+    work = asyncio.create_task(_svc(request).translate(body.text.strip(), body.target))
+    watch = asyncio.create_task(_until_disconnected(request))
+    try:
+        await asyncio.wait({work, watch}, return_when=asyncio.FIRST_COMPLETED)
+    finally:
+        watch.cancel()
+        if not work.done():
+            # The reader closed the translation or left: stop the model instead of finishing it.
+            work.cancel()
+            await asyncio.gather(work, return_exceptions=True)
+    if work.cancelled():
+        return Response(status_code=499)  # nobody is waiting for it
+    try:
+        translation = work.result()
+    except LLMError as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
+    return TranslateOut(translation=translation, target=body.target)
+
+
+async def _until_disconnected(request: Request, every: float = 0.5) -> None:
+    while not await request.is_disconnected():
+        await asyncio.sleep(every)
 
 
 @router.get("/api/images/{image_id}")

@@ -20,10 +20,14 @@ function localMessage(sessionId: string, role: "user" | "assistant", content: st
 interface Options {
   /** A task was drafted, approved or rejected (for notifications and the schedule). */
   onActionChange?: (action: Action) => void;
+  /** The language replies come in ("Vietnamese"); "" = the user's own. */
+  language?: string;
+  /** Look questions up on the web and show links and related topics under replies. */
+  search?: boolean;
 }
 
 /** Sessions, the active conversation, text + voice message streaming, and task drafts. */
-export function useChat({ onActionChange }: Options = {}) {
+export function useChat({ onActionChange, language = "", search = false }: Options = {}) {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -36,6 +40,10 @@ export function useChat({ onActionChange }: Options = {}) {
   activeIdRef.current = activeId;
   const onActionChangeRef = useRef(onActionChange);
   onActionChangeRef.current = onActionChange;
+  const languageRef = useRef(language);
+  languageRef.current = language;
+  const searchRef = useRef(search);
+  searchRef.current = search;
 
   const refreshSessions = useCallback(async () => {
     try {
@@ -132,12 +140,19 @@ export function useChat({ onActionChange }: Options = {}) {
           content,
           {
             onToken: (t) => updateLastAssistant((m) => ({ ...m, content: m.content + t })),
+            onSearching: (query) => updateLastAssistant((m) => ({ ...m, searching: query })),
+            onWeb: ({ error, ...web }) => {
+              updateLastAssistant((m) => ({ ...m, searching: undefined, web: web.links.length ? web : null }));
+              if (error) setError(error);
+            },
             onError: (message) => updateLastAssistant((m) => ({ ...m, error: message })),
           },
           controller.signal,
           "text",
           images.map((i) => ({ media_type: i.mediaType, data: i.data })),
           files.map((f) => f.id),
+          languageRef.current,
+          searchRef.current,
         );
         updateLastAssistant((m) => ({ ...m, pending: false }));
         await Promise.all([loadSession(sessionId), refreshSessions()]);

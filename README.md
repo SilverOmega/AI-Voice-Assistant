@@ -15,6 +15,8 @@ A private AI assistant that runs on your own computer. Type to it, talk to it, o
 - **Sessions**: create, rename and delete conversations. Voice turns go into the same history.
 - **Runtime settings**: switch provider, model, system prompt and temperature without restarting.
 - **Compact chat window**: the chat sits in a floating card. Conversations, plans, the schedule, service status and Settings are in the drawer behind the person icon. The pop-out icon opens the chat in its own small window.
+- **Any language, and translation**: choose the language the assistant replies and talks in, from the list or by typing any language's name. Anyone following a chat can translate a message, or any text they select, into their own language.
+- **Web search, links and related topics**: questions are looked up on the web before the assistant answers. Under the reply you get the websites to read more and related topics to explore next; click a topic to ask about it. Search runs on your own SearXNG container, so no account or API key is needed.
 - **Pet**: a cat, dog or bunny sits next to the chat. While the assistant is offline (the chat service or its model is down) it falls asleep; point at it to hear it snore, or tap it on a phone. Choose the pet, or none, in Settings.
 
 ## Architecture
@@ -38,8 +40,9 @@ A private AI assistant that runs on your own computer. Type to it, talk to it, o
 
 | Service | Responsibility | Key endpoints |
 |---|---|---|
-| `services/chat` | Conversations, history (SQLite), LLM streaming, runtime config | `GET/POST /api/sessions`, `GET/PATCH/DELETE /api/sessions/{id}`, `POST /api/sessions/{id}/messages[/stream]`, `GET/PATCH /api/config`, `GET /api/models`, `GET /health` |
+| `services/chat` | Conversations, history (SQLite), LLM streaming, web search, translation, runtime config | `POST /api/translate`, `GET/POST /api/sessions`, `GET/PATCH/DELETE /api/sessions/{id}`, `POST /api/sessions/{id}/messages[/stream]`, `GET/PATCH /api/config`, `GET /api/models`, `GET /health` |
 | `services/voice` | Endpointing, STT, TTS, orchestration of a voice turn | `WS /ws/voice`, `POST /api/stt`, `POST /api/tts`, `GET /api/voices`, `GET /health` |
+| `searxng` | Web search for the chat service (Docker only, no published port) | `GET /search?format=json` |
 | `services/wakeword` | Always-on wake-phrase detection | `WS /ws/wakeword`, `GET /api/models`, `GET /health` |
 | `frontend` | UI, mic capture, playback, voice-mode state machine | — |
 
@@ -146,12 +149,30 @@ If the computer's address changes, run the script again and restart the frontend
   | **Token limit:** a reply is cut off at `MAX_OUTPUT_TOKENS` | ✓ | |
 
   The same problem within 10 minutes is reported once. There are no user accounts: each browser keeps a random id in local storage, so a private window or cleared site data counts as a new device. Behind Docker Desktop every visitor shows the same internal address, so the IP is left out there.
+- **Languages:** in Settings → *Language*, choose what the assistant **replies in**: a language from the list, *Other language…* to type any other one, or the default, which answers in whatever language you use. It applies to typed chats, dictation and voice on that device.
+  - Speech recognition then listens for that language. The default `base.en` model only understands English, so for other languages set `STT_MODEL=base` (or `small` for better accuracy) in `.env` and restart the voice service. The app warns you if you forget.
+  - Replies are spoken with a Piper voice for that language, downloaded the first time (about 60 MB). Languages Piper has no voice for, such as Japanese, Korean and Thai, are spoken by the browser's own voices. Choose other voices with `PIPER_VOICES`.
+  - How well the assistant writes a language depends on the model. Small local models such as `llama3.2` handle the major European languages; for others, try `qwen2.5:7b`, `gemma3:4b` or Claude.
+- **Translate:** for anyone following a conversation, for example on a phone next to you.
+  - Point at a message (or tap below it on a phone) and press **Translate** to show its translation inside the bubble. Press it again to hide it.
+  - Select any part of the conversation and press the **Translate** button that appears next to it. The translation opens in a small panel with a language menu, so you can read the same text in several languages, and a **Copy** button.
+  - Each device keeps its own *Translate messages into* language (Settings → *Language*, or the menu in the panel). It starts as the browser's language, so two people can follow the same chat in different languages.
+  - The active model translates, so nothing leaves this computer when you use Ollama. Translations aren't saved in the chat. Repeat requests are answered from a cache, and if the page closes mid-translation the model stops.
+- **Web search:** the globe button next to the paperclip turns it on or off for this device (on by default).
+  - While it's on, each question is searched first ("Searching the web for …" under the reply). The model answers from the results, which helps with anything recent.
+  - Under the reply, **Read more on the web** lists the pages found: site, title and a short excerpt. They open in a new tab.
+  - **Related topics** are suggestions from the search engine. Click one to ask about it in the same chat.
+  - Small talk ("thanks", "hi there") and messages with pictures or documents aren't searched. Voice questions are searched too; the links appear in the chat, and the spoken reply doesn't read them out.
+  - The links are saved with the reply, so they're still there later and on other devices.
+  - What is searched: your message as you typed it. It goes from your SearXNG container to the search engines it uses (Google, Bing, DuckDuckGo, Wikipedia and others), without your browser's cookies or sign-ins, though they do see your internet connection's address. Turn the globe off for questions you'd rather not send.
 - **Voice:** pick a mode in the voice bar, then click the round mic button.
   - *Push to talk:* hold the button, or hold **Space** when not typing.
   - *Hands-free:* just talk. A pause of about 0.8 s ends your turn.
   - *Wake word:* say "Hey Jarvis". A chime confirms. After the reply you have a follow-up window (8 s by default) to keep talking before it waits for the wake word again. *Talk now* skips the wake word.
 - **Settings** (in the drawer behind the person icon):
   - Model: provider, model, system prompt, temperature.
+  - Language: the reply language and the translation language.
+  - (Web search is the globe button in the message box, not a setting.)
   - Voice: speak replies, barge-in.
   - Pet: cat, dog, bunny or none.
   - Wake word: phrase, sensitivity threshold, follow-up window.
@@ -172,6 +193,10 @@ All settings are environment variables. Put them in `.env`; Docker and the nativ
 | `ANTHROPIC_API_KEY` | — | Required for Claude |
 | `ANTHROPIC_MODEL` | `claude-opus-5-5` | |
 | `ANTHROPIC_EFFORT` | `low` | `low`…`max`; low keeps voice latency down |
+| `WEB_SEARCH` | `searxng` | `searxng` (the bundled container), `brave` ([Brave Search API](https://brave.com/search/api/), needs `BRAVE_API_KEY`) or `off` |
+| `BRAVE_API_KEY` | — | For `WEB_SEARCH=brave` |
+| `WEB_SEARCH_RESULTS` | `5` | Pages found per question (1–10), shown under the reply and given to the model |
+| `SEARXNG_URL` | `http://localhost:8888` | Native runs only: your own SearXNG with `json` in `search.formats` (see `services/searxng/settings.yml`). Docker uses the bundled container |
 | `MAX_HISTORY_MESSAGES` | `30` | Messages of context sent to the model |
 | `DOCUMENT_MAX_CHARS` | `40000` | Characters of attached document text sent with one request (about 10,000 tokens), newest documents first |
 | `OLLAMA_MAX_CTX` | `16384` | Largest context window (tokens) requested from Ollama when a prompt outgrows its default, as with documents. More needs more memory; `0` leaves it to Ollama |
@@ -195,6 +220,7 @@ All settings are environment variables. Put them in `.env`; Docker and the nativ
 | `STT_DEVICE` / `STT_COMPUTE_TYPE` | `cpu` / `int8` | Native: `cuda` / `float16` with CUDA 12 + cuDNN installed |
 | `TTS_ENGINE` | `piper` | `browser` uses the Web Speech API instead; `none` disables speech |
 | `PIPER_VOICE` | `en_US-lessac-medium` | Any [Piper voice](https://huggingface.co/rhasspy/piper-voices); downloaded on first use |
+| `PIPER_VOICES` | — | Voices for other reply languages, as JSON: `{"vi": "vi_VN-vais1000-medium", "de": "de_DE-thorsten-high"}`. Overrides the built-in choice per language code |
 | `VAD_SILENCE_MS` | `800` | Silence that ends a hands-free turn |
 | `WAKEWORD_DEFAULT` | `hey_jarvis` | Also offered: `alexa`, `hey_mycroft` |
 | `WAKEWORD_THRESHOLD` | `0.5` | Lower = more sensitive |
@@ -204,7 +230,7 @@ All settings are environment variables. Put them in `.env`; Docker and the nativ
 | `APP_HTTPS_PORT` | `8443` | HTTPS port for phones, tablets and other computers |
 | `REMOTE_BIND` | `0.0.0.0` | `127.0.0.1` keeps the HTTPS port on this computer only |
 
-**Other languages:** set `STT_MODEL=small`, `STT_LANGUAGE=vi` (for example) and a matching `PIPER_VOICE` such as `vi_VN-vais1000-medium`. Then pick an LLM that speaks the language.
+**Other languages:** choosing a reply language in Settings is usually enough, with a multilingual `STT_MODEL` such as `base` or `small`. To make a language the default for every device, also set `STT_LANGUAGE=vi` (for example) and a matching `PIPER_VOICE` such as `vi_VN-vais1000-medium`. Either way, pick an LLM that speaks the language.
 
 **Custom wake words:** train an openWakeWord model and drop the `.onnx` file into `models/wakeword/`. It appears in Settings under its file name. In Docker, more pretrained models can be baked in with `WAKEWORD_MODELS_BUILD="hey_jarvis alexa hey_rhasspy"`.
 
@@ -218,7 +244,7 @@ Set `ANTHROPIC_API_KEY` in `.env` and either set `LLM_PROVIDER=anthropic` or swi
 
 Client to server:
 - **Audio:** binary frames of 16 kHz mono PCM16 little-endian.
-- **Configuration:** `{"type":"start","session_id":..,"mode":"vad"|"ptt","tts":bool,"barge_in":bool,"voice":..}`
+- **Configuration:** `{"type":"start","session_id":..,"mode":"vad"|"ptt","tts":bool,"barge_in":bool,"voice":..,"language":"Vietnamese","language_code":"vi","search":bool}`. `language` is what the reply is written in; `language_code` sets speech recognition and picks the voice. Leave both out for the defaults. `search: true` looks questions up on the web first.
 - **Push-to-talk boundaries:** `{"type":"ptt_start"}` / `{"type":"ptt_end"}`
 - **Typed turn:** `{"type":"text","text":".."}` runs a turn from text, and the reply is spoken.
 - **Interrupt:** `{"type":"cancel"}` aborts the current turn.
@@ -227,7 +253,7 @@ Server to client, as JSON events:
 - `ready`, `state` (`listening` | `recording` | `transcribing` | `thinking` | `speaking`), `vad`
 - `session`, `transcript`
 - `assistant_start`, `token`, `assistant_done`
-- `speak` (browser TTS), `tts_done`, `turn_done`
+- `speak` (browser TTS, with `lang` when a reply language is set), `tts_done`, `turn_done`
 - `interrupted`, `error`
 
 Spoken audio arrives as binary frames, one WAV per sentence, in order.
@@ -285,6 +311,8 @@ docker-compose.yml, docker-compose.gpu.yml, .env.example
 | Voice status "STT loading…" for a long time | First start downloads Whisper. Check `docker compose logs voice`. |
 | Assistant answers itself or loops | Turn off barge-in, or use headphones. Echo cancellation can't remove everything from loud speakers. |
 | Hands-free cuts you off / waits too long | Adjust `VAD_SILENCE_MS`. In a noisy room, try push-to-talk. |
+| "Web search didn't work" | `docker compose ps searxng` should say *running*; check `docker compose logs searxng`. If the engines it uses block it for a while, results come back empty: try again later, or switch to `WEB_SEARCH=brave`. |
+| Search results are off-topic for follow-ups | The message is searched as typed, so "what about the price?" lacks the topic. Name it ("what does the Pixel 10 cost?"), or turn the globe off for that question. |
 | Too many or too few wake-ups | Adjust the sensitivity in Settings (threshold 0.3–0.7). |
 | No speech heard | Check "Speak replies". Some browsers need one click on the page before audio can play. |
 

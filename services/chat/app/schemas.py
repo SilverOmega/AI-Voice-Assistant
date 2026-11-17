@@ -5,11 +5,12 @@ from base64 import b64decode
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, PrivateAttr, model_validator
+from pydantic import BaseModel, Field, PrivateAttr, field_validator, model_validator
 
 from .config import ProviderName
 from .documents import MAX_FILES_PER_MESSAGE
 from .llm.base import ImageData
+from .translate import MAX_TRANSLATE_CHARS, clean_language, valid_language
 
 Role = Literal["user", "assistant", "system"]
 Source = Literal["text", "voice"]
@@ -67,6 +68,21 @@ class FileImport(BaseModel):
     url: str = Field(min_length=8, max_length=2000)
 
 
+class WebLink(BaseModel):
+    title: str
+    url: str
+    snippet: str = ""
+
+
+class WebResults(BaseModel):
+    """What a web search found for the user's message, shown under the reply."""
+
+    query: str
+    links: list[WebLink] = []
+    # Topics to explore next; sending one asks about it.
+    related: list[str] = []
+
+
 class MessageOut(BaseModel):
     id: str
     session_id: str
@@ -76,6 +92,7 @@ class MessageOut(BaseModel):
     created_at: datetime
     images: list[ImageRef] = []
     files: list[FileRef] = []
+    web: WebResults | None = None
 
 
 class SessionOut(BaseModel):
@@ -105,12 +122,53 @@ class ChatRequest(BaseModel):
     images: list[ImageIn] = Field(default=[], max_length=MAX_IMAGES_PER_MESSAGE)
     # Ids of documents uploaded with POST /api/files.
     files: list[str] = Field(default=[], max_length=MAX_FILES_PER_MESSAGE)
+    # The language the assistant replies in, e.g. "Vietnamese"; empty or "auto" = the user's own.
+    language: str | None = None
+    # Search the web for the message and answer from the results. Skipped for small talk
+    # ("thanks") and for messages with pictures or documents.
+    search: bool = False
+
+    @field_validator("language")
+    @classmethod
+    def _language(cls, value: str | None) -> str | None:
+        return _checked_language(value)
 
     @model_validator(mode="after")
     def _not_empty(self) -> "ChatRequest":
         if not self.content.strip() and not self.images and not self.files:
             raise ValueError("a message needs text, a picture or a document")
         return self
+
+
+def _checked_language(value: str | None) -> str | None:
+    value = clean_language(value)
+    if value is not None and not valid_language(value):
+        raise ValueError("not a language name")
+    return value
+
+
+class TranslateRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=MAX_TRANSLATE_CHARS)
+    target: str = Field(min_length=1, description='Language to translate into, e.g. "Vietnamese"')
+
+    @field_validator("target")
+    @classmethod
+    def _target(cls, value: str) -> str:
+        checked = _checked_language(value)
+        if checked is None:
+            raise ValueError("choose a language to translate into")
+        return checked
+
+    @model_validator(mode="after")
+    def _has_text(self) -> "TranslateRequest":
+        if not self.text.strip():
+            raise ValueError("nothing to translate")
+        return self
+
+
+class TranslateOut(BaseModel):
+    translation: str
+    target: str
 
 
 class ChatResponse(BaseModel):
@@ -137,6 +195,8 @@ class RuntimeConfigUpdate(BaseModel):
 class ConfigOut(RuntimeConfig):
     available_providers: list[ProviderName]
     provider_status: dict[str, str]
+    # The web search engine ("searxng", "brave"), or "" when web search is off.
+    web_search: str = ""
 
 
 class HealthOut(BaseModel):

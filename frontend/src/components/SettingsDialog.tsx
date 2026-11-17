@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
 import { api, auth as authApi } from "../lib/api";
+import type { LanguagePrefs } from "../hooks/useLanguage";
 import { PETS, type PetKind } from "../hooks/usePet";
 import type { AuthStatus, AutomationInfo, ChannelPrefs, ChatConfig, NotificationSettings, ProviderName, VoicePrefs } from "../lib/types";
 import { XIcon } from "./icons";
+import { LanguagePicker } from "./Translate";
 
 interface Props {
   open: boolean;
@@ -13,6 +15,8 @@ interface Props {
   onSignedOut: () => void;
   pet: PetKind;
   onPet: (pet: PetKind) => void;
+  language: LanguagePrefs;
+  onLanguage: (changes: Partial<LanguagePrefs>) => void;
 }
 
 const PROVIDER_LABELS: Record<ProviderName, string> = {
@@ -21,7 +25,18 @@ const PROVIDER_LABELS: Record<ProviderName, string> = {
   echo: "Echo (offline test)",
 };
 
-export function SettingsDialog({ open, onClose, prefs, onPrefs, auth, onSignedOut, pet, onPet }: Props) {
+export function SettingsDialog({
+  open,
+  onClose,
+  prefs,
+  onPrefs,
+  auth,
+  onSignedOut,
+  pet,
+  onPet,
+  language,
+  onLanguage,
+}: Props) {
   const [config, setConfig] = useState<ChatConfig | null>(null);
   const [draft, setDraft] = useState({ provider: "ollama" as ProviderName, model: "", system_prompt: "", temperature: 0.7 });
   const [models, setModels] = useState<string[]>([]);
@@ -204,6 +219,35 @@ export function SettingsDialog({ open, onClose, prefs, onPrefs, auth, onSignedOu
               </button>
               {status && <p className="text-xs text-slate-600 dark:text-slate-400">{status}</p>}
             </div>
+          </section>
+
+          <section className="space-y-3">
+            <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">Language</h3>
+            <label className="block text-sm">
+              The assistant replies in
+              <LanguagePicker
+                className={field}
+                value={language.reply}
+                autoLabel="The language you write or speak in"
+                onChange={(reply) => onLanguage({ reply })}
+              />
+              <span className="mt-1 block text-xs text-slate-500">
+                For typed and spoken chats on this device. Talking in a language other than English needs a
+                multilingual speech model: set <code>STT_MODEL=base</code> (or <code>small</code>) in <code>.env</code>.
+              </span>
+            </label>
+            <label className="block text-sm">
+              Translate messages into
+              <LanguagePicker
+                className={field}
+                value={language.translateTo}
+                onChange={(translateTo) => onLanguage({ translateTo })}
+              />
+              <span className="mt-1 block text-xs text-slate-500">
+                Following someone else's chat? Press <strong>Translate</strong> under a message, or select any text in
+                the conversation, to read it in this language.
+              </span>
+            </label>
           </section>
 
           <section className="space-y-3">

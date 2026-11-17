@@ -1,10 +1,11 @@
 """Voice service configuration, loaded from environment variables / .env."""
 
+import json
 from functools import lru_cache
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import Field
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import Field, field_validator
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 SAMPLE_RATE = 16_000  # PCM16 mono, used for all streamed microphone audio
 
@@ -30,6 +31,17 @@ class Settings(BaseSettings):
     piper_data_dir: str = "models/piper"
     piper_auto_download: bool = True
     piper_length_scale: float = Field(default=1.0, gt=0.2, lt=3.0)  # >1 = slower speech
+    # Voices for reply languages other than PIPER_VOICE's, as JSON {"language code": "voice"},
+    # e.g. {"vi": "vi_VN-vais1000-medium"}. Added to (and overriding) the built-in choices.
+    # Languages without a Piper voice are spoken by the browser instead.
+    piper_voices: Annotated[dict[str, str], NoDecode] = {}
+
+    @field_validator("piper_voices", mode="before")
+    @classmethod
+    def _voices(cls, value: object) -> object:
+        if isinstance(value, str):  # Docker Compose passes "" when it isn't set
+            return json.loads(value) if value.strip() else {}
+        return value
 
     # End-of-speech detection (energy based, adaptive to background noise)
     vad_min_threshold: float = 0.012  # RMS of float audio in [-1, 1]

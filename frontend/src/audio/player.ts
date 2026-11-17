@@ -52,9 +52,15 @@ export class SpeechPlayer {
       });
   }
 
-  speakText(text: string): void {
+  /** `lang`: a language code ("ja") so the browser picks a voice that can say it. */
+  speakText(text: string, lang?: string): void {
     if (!("speechSynthesis" in window)) return;
     const utterance = new SpeechSynthesisUtterance(text);
+    if (lang) {
+      utterance.lang = lang;
+      const voice = window.speechSynthesis.getVoices().find((v) => v.lang.toLowerCase().split(/[-_]/)[0] === lang);
+      if (voice) utterance.voice = voice;
+    }
     this.utterances++;
     const done = () => {
       this.utterances = Math.max(0, this.utterances - 1);

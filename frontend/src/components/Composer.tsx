@@ -6,7 +6,7 @@ import { MAX_IMAGES, imageFiles, prepareImage, type PreparedImage } from "../lib
 import { requestNotifyPermission } from "../lib/notify";
 import type { ActionKind, AutomationInfo, UploadedFile } from "../lib/types";
 import { KIND_LABELS } from "./ActionCard";
-import { BoltIcon, FileIcon, ImageIcon, LinkIcon, MicIcon, PaperclipIcon, PawIcon, StopIcon, XIcon } from "./icons";
+import { BoltIcon, FileIcon, GlobeIcon, ImageIcon, LinkIcon, MicIcon, PaperclipIcon, PawIcon, StopIcon, XIcon } from "./icons";
 
 interface Props {
   streaming: boolean;
@@ -19,6 +19,10 @@ interface Props {
   onError: (message: string) => void;
   /** More pictures than a message can carry; `attempted` counts the ones already attached. */
   onPhotoLimit: (attempted: number) => void;
+  /** Code of the language dictation listens for ("vi"); null = the server's default. */
+  dictationLanguage?: string | null;
+  /** Web search for questions: on or off on this device, and whether the server has it. */
+  webSearch?: { on: boolean; available: boolean | null; toggle: () => void };
 }
 
 /** A document in the message box: uploading (no `file` yet) or read by the server. */
@@ -52,7 +56,18 @@ function hostOf(url: string): string {
  * Text input with MediaRecorder dictation (speech is transcribed into the box, not sent),
  * pictures and documents (the paperclip, paste, or drag and drop) and documents from a link.
  */
-export function Composer({ streaming, drafting, automation, onSend, onTask, onStop, onError, onPhotoLimit }: Props) {
+export function Composer({
+  streaming,
+  drafting,
+  automation,
+  onSend,
+  onTask,
+  onStop,
+  onError,
+  onPhotoLimit,
+  dictationLanguage = null,
+  webSearch,
+}: Props) {
   const [text, setText] = useState("");
   const [task, setTask] = useState<ActionKind | null>(null);
   const [menu, setMenu] = useState<"task" | "attach" | null>(null);
@@ -161,7 +176,7 @@ export function Composer({ streaming, drafting, automation, onSend, onTask, onSt
       setDictation("transcribing");
       try {
         const clip = await recorder.current.stop();
-        const { text: heard } = await api.transcribe(clip);
+        const { text: heard } = await api.transcribe(clip, dictationLanguage);
         if (heard) setText((t) => (t ? `${t} ${heard}` : heard));
         else onError("No speech was recognized.");
       } catch (err) {
@@ -451,6 +466,28 @@ export function Composer({ streaming, drafting, automation, onSend, onTask, onSt
               </div>
             )}
           </div>
+          {webSearch && (
+            <button
+              onClick={webSearch.toggle}
+              disabled={webSearch.available === false || task !== null}
+              aria-pressed={webSearch.on && webSearch.available !== false}
+              aria-label="Search the web"
+              title={
+                webSearch.available === false
+                  ? "Web search is off on the server (WEB_SEARCH in .env)"
+                  : webSearch.on
+                    ? "Web search is on: questions are looked up, with links and related topics under replies. Click to turn off."
+                    : "Web search is off. Click to look questions up and get links and related topics."
+              }
+              className={`rounded-xl p-2 disabled:opacity-40 ${
+                webSearch.on && webSearch.available !== false
+                  ? "bg-sky-50 text-sky-600 hover:bg-sky-100 dark:bg-sky-950/60 dark:text-sky-300 dark:hover:bg-sky-900/60"
+                  : "text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+              }`}
+            >
+              <GlobeIcon />
+            </button>
+          )}
           <button
             onClick={toggleDictation}
             disabled={dictation === "transcribing"}

@@ -22,6 +22,7 @@ from .schemas import (
     SessionDetail,
     SessionOut,
     Source,
+    WebResults,
 )
 
 SCHEMA = """
@@ -148,6 +149,7 @@ class Repository:
         await self._db.execute("PRAGMA journal_mode = WAL")
         await self._db.executescript(SCHEMA)
         await self._add_missing_columns("actions", {"reminded_at": "TEXT"})
+        await self._add_missing_columns("messages", {"web": "TEXT"})  # WebResults as JSON
         # An action that was running when the service stopped goes back for review.
         await self._db.execute(
             "UPDATE actions SET status = 'pending', error = ? WHERE status = 'running'",
@@ -239,14 +241,16 @@ class Repository:
         source: Source = "text",
         images: Sequence[ImageData] = (),
         files: Sequence[FileRef] = (),
+        web: WebResults | None = None,
     ) -> MessageOut:
-        """Store a message. `files` were uploaded with add_file and are attached to it here."""
+        """Store a message. `files` were uploaded with add_file and are attached to it here.
+        `web`: what a web search found for the question this message answers."""
         now = _now()
         mid = _new_id()
         await self.db.execute(
-            "INSERT INTO messages (id, session_id, role, content, source, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (mid, session_id, role, content, source, now),
+            "INSERT INTO messages (id, session_id, role, content, source, created_at, web) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (mid, session_id, role, content, source, now, web.model_dump_json() if web else None),
         )
         refs = [ImageRef(id=_new_id(), media_type=img.media_type) for img in images]
         await self.db.executemany(
@@ -275,6 +279,7 @@ class Repository:
             created_at=now,
             images=refs,
             files=list(files),
+            web=web,
         )
 
     async def list_messages(self, session_id: str, limit: int | None = None) -> list[MessageOut]:
@@ -315,7 +320,11 @@ class Repository:
                     FileRef(id=f["id"], name=f["name"], media_type=f["media_type"], size=f["size"])
                 )
         return [
-            MessageOut(**dict(row), images=refs.get(row["id"], []), files=files.get(row["id"], []))
+            MessageOut(
+                **{**dict(row), "web": _web(row["web"])},
+                images=refs.get(row["id"], []),
+                files=files.get(row["id"], []),
+            )
             for row in rows
         ]
 
@@ -617,6 +626,15 @@ class Repository:
             (key, json.dumps(value)),
         )
         await self.db.commit()
+
+
+def _web(value: str | None) -> WebResults | None:
+    if not value:
+        return None
+    try:
+        return WebResults.model_validate_json(value)
+    except ValueError:
+        return None
 
 
 def _notification(row: aiosqlite.Row) -> NotificationOut:

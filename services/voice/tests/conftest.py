@@ -17,12 +17,15 @@ class FakeSTT:
         self.text = text
         self.status = EngineStatus("fake-stt", ready=True)
         self.calls = 0
+        self.multilingual = True
+        self.languages: list[str | None] = []
 
     def load(self) -> None:
         pass
 
-    def transcribe(self, audio) -> Transcript:
+    def transcribe(self, audio, language: str | None = None) -> Transcript:
         self.calls += 1
+        self.languages.append(language)
         return Transcript(text=self.text, language="en", duration=1.0, elapsed=0.01)
 
 
@@ -30,11 +33,16 @@ class FakeTTS:
     def __init__(self):
         self.status = EngineStatus("fake-tts", ready=True)
         self.spoken: list[str] = []
+        self.voices: list[str | None] = []
+        self.broken_voices: set[str] = set()
 
     def load(self) -> None:
         pass
 
     def synthesize(self, text: str, voice: str | None = None) -> bytes:
+        if voice in self.broken_voices:
+            raise FileNotFoundError(f"no voice {voice}")
+        self.voices.append(voice)
         self.spoken.append(text)
         return b"RIFF" + text.encode()
 
@@ -70,6 +78,9 @@ class FakeChatBackend:
             return f"event: {name}\ndata: {json.dumps(data)}\n\n".encode()
 
         yield ev("start", {"model": "fake"})
+        if self.received and self.received[-1].get("search"):
+            yield ev("searching", {"query": self.received[-1]["content"]})
+            yield ev("web", {"query": self.received[-1]["content"], "links": [], "related": []})
         for word in self.reply.split(" "):
             if self.delay:
                 await asyncio.sleep(self.delay)

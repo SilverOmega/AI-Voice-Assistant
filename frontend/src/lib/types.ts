@@ -6,6 +6,20 @@ export interface ImageRef {
   media_type: string;
 }
 
+/** A web page a search found for the question a reply answers. */
+export interface WebLink {
+  title: string;
+  url: string;
+  snippet: string;
+}
+
+export interface WebResults {
+  query: string;
+  links: WebLink[];
+  /** Topics to explore next. */
+  related: string[];
+}
+
 export interface Message {
   id: string;
   session_id: string;
@@ -15,6 +29,10 @@ export interface Message {
   created_at: string;
   images?: ImageRef[];
   files?: FileRef[];
+  /** Links and related topics from a web search, on assistant messages. */
+  web?: WebResults | null;
+  /** Client-only: the web search running for this reply (its query). */
+  searching?: string;
   /** Client-only: message is still streaming or not yet persisted. */
   pending?: boolean;
   /** Client-only: data: URLs of images attached to a message that is not yet persisted. */
@@ -121,6 +139,8 @@ export interface ChatConfig {
   temperature: number;
   available_providers: ProviderName[];
   provider_status: Record<string, string>;
+  /** The web search engine ("searxng", "brave"); "" = web search is off on the server. */
+  web_search: string;
 }
 
 export interface ServiceHealth {
@@ -147,6 +167,10 @@ export interface VoicePrefs {
   wakeModel: string;
   wakeThreshold: number;
   followUpSeconds: number;
+  /** The language to talk in ("Vietnamese"); empty = STT_LANGUAGE, and the model follows the user. */
+  language?: string;
+  /** Look questions up on the web before answering. */
+  search?: boolean;
 }
 
 /** Messages sent by the voice service over /ws/voice. */
@@ -159,7 +183,7 @@ export type VoiceServerMessage =
   | { type: "assistant_start"; model?: string }
   | { type: "token"; text: string }
   | { type: "assistant_done"; text: string; message_id?: string; llm_seconds?: number }
-  | { type: "speak"; text: string }
+  | { type: "speak"; text: string; lang?: string }
   | { type: "tts_done" }
   | { type: "turn_done" }
   | { type: "interrupted" }

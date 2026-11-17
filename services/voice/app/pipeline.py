@@ -25,7 +25,7 @@ import numpy as np
 
 from .chat_client import ChatClient, ChatClientError
 from .config import SAMPLE_RATE, Settings
-from .engines import STTEngine, TTSEngine
+from .engines import LANGUAGE_CODE, STTEngine, TTSEngine, piper_voice_for
 from .sentences import SentenceChunker
 from .vad import Endpointer, pcm16_to_float
 
@@ -42,6 +42,12 @@ class SessionOptions:
     tts: bool = True
     barge_in: bool = False
     voice: str | None = None
+    # The language to talk in: its name for the model ("Vietnamese") and its code ("vi") for
+    # speech recognition and the voice. None = STT_LANGUAGE, and the model follows the user.
+    language: str | None = None
+    language_code: str | None = None
+    # Look questions up on the web first; the links show under the reply in the chat.
+    search: bool = False
 
 
 class VoiceSession:
@@ -65,6 +71,7 @@ class VoiceSession:
         self._ptt_buffer: list[bytes] | None = None
         self._turn: asyncio.Task | None = None
         self._state = ""
+        self._warned_language: str | None = None
 
     def _new_endpointer(self) -> Endpointer:
         s = self.settings
@@ -99,11 +106,13 @@ class VoiceSession:
     async def handle_control(self, msg: dict[str, Any]) -> None:
         kind = msg.get("type")
         if kind == "start":
-            for key in ("session_id", "mode", "tts", "barge_in", "voice"):
+            for key in ("session_id", "mode", "tts", "barge_in", "voice", "language", "language_code", "search"):
                 if key in msg:
                     setattr(self.options, key, msg[key])
+            self.options.search = self.options.search is True
             if self.options.mode not in ("vad", "ptt"):
                 self.options.mode = "vad"
+            await self._check_language()
             if self.turn_active:  # option change mid-turn: don't disturb the running turn
                 return
             self.endpointer.reset()
@@ -138,6 +147,28 @@ class VoiceSession:
             await self.interrupt()
         else:
             await self.send({"type": "error", "message": f"Unknown message type: {kind!r}"})
+
+    async def _check_language(self) -> None:
+        opts = self.options
+        if not isinstance(opts.language, str) or not opts.language.strip():
+            opts.language = None
+        else:
+            opts.language = opts.language.strip()[:60]  # the chat service checks it's a name
+        if not isinstance(opts.language_code, str) or not LANGUAGE_CODE.match(opts.language_code):
+            opts.language_code = None
+        code = opts.language_code
+        if code and code != "en" and not getattr(self.stt, "multilingual", True):
+            if code != self._warned_language:
+                self._warned_language = code
+                await self.send(
+                    {
+                        "type": "error",
+                        "message": f"Speech recognition ({self.settings.stt_model}) only understands "
+                        f"English, so it can't hear {opts.language or code}. Set STT_MODEL to a "
+                        "multilingual model such as base or small in .env and restart. "
+                        "Replies still come in your language.",
+                    }
+                )
 
     async def handle_audio(self, pcm16: bytes) -> None:
         if self.options.mode == "ptt":
@@ -180,7 +211,7 @@ class VoiceSession:
         try:
             if audio is not None:
                 await self.set_state("transcribing")
-                result = await asyncio.to_thread(self.stt.transcribe, audio)
+                result = await asyncio.to_thread(self.stt.transcribe, audio, self.options.language_code)
                 text = result.text
                 await self.send(
                     {
@@ -220,7 +251,7 @@ class VoiceSession:
         try:
             # aclosing: an interrupted turn must close the HTTP stream right away so the chat
             # service stops generating (and saves the partial reply).
-            async with aclosing(self.chat.stream(session_id, text)) as events:
+            async with aclosing(self.chat.stream(session_id, text, self.options.language, self.options.search)) as events:
                 async for event, data in events:
                     if event == "start":
                         await self.send({"type": "assistant_start", "model": data.get("model")})
@@ -253,26 +284,42 @@ class VoiceSession:
     async def _speak(self, sentences: asyncio.Queue[str | None]) -> None:
         """Synthesize sentences in order while the LLM keeps streaming."""
         spoke = False
+        code = self.options.language_code
+        voice = self.options.voice or piper_voice_for(code, self.settings)
+        # Piper has no voice for this language: the browser speaks it instead, in that language.
+        in_browser = not self.server_tts or voice == ""
         while (sentence := await sentences.get()) is not None:
             if not self.options.tts:
                 continue
-            if not self.server_tts:
-                if not spoke:
-                    await self.set_state("speaking")
-                    spoke = True
-                await self.send({"type": "speak", "text": sentence})
-                continue
-            try:
-                wav = await asyncio.to_thread(self.tts.synthesize, sentence, self.options.voice)
-            except Exception as exc:
-                log.exception("tts failed")
-                await self.send({"type": "error", "message": f"Text-to-speech failed: {exc}"})
-                self.options.tts = False
-                continue
+            if not in_browser:
+                try:
+                    wav = await asyncio.to_thread(self.tts.synthesize, sentence, voice)
+                except Exception as exc:
+                    log.exception("tts failed")
+                    if voice and not self.options.voice:
+                        # A language voice that couldn't be downloaded or loaded.
+                        in_browser = True
+                        await self.send(
+                            {
+                                "type": "error",
+                                "message": f"Couldn't load the Piper voice {voice} ({exc}). "
+                                "Your browser speaks the reply instead.",
+                            }
+                        )
+                    else:
+                        await self.send({"type": "error", "message": f"Text-to-speech failed: {exc}"})
+                        self.options.tts = False
+                        continue
+                else:
+                    if not spoke:
+                        await self.set_state("speaking")
+                        spoke = True
+                    await self._send_bytes(wav)
+                    continue
             if not spoke:
                 await self.set_state("speaking")
                 spoke = True
-            await self._send_bytes(wav)
+            await self.send({"type": "speak", "text": sentence, **({"lang": code} if code else {})})
         if spoke:
             await self.send({"type": "tts_done"})
 
