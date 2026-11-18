@@ -20,6 +20,45 @@ export interface WebResults {
   related: string[];
 }
 
+// ---- agents: a lead assistant plans, helpers use tools --------------------------
+// Mirrors AgentTrace & co. in services/chat/app/schemas.py.
+
+export type AgentStatus = "waiting" | "running" | "done" | "failed" | "skipped";
+
+export interface ToolTrace {
+  tool: string;
+  /** Short previews of the arguments and the result. */
+  input: string;
+  output: string;
+  status: AgentStatus;
+  /** The draft the tool stored for review, if any. */
+  action_id?: string | null;
+}
+
+export interface AgentStepTrace {
+  agent: string;
+  title: string;
+  task: string;
+  status: AgentStatus;
+  summary: string;
+  tools: ToolTrace[];
+}
+
+export interface AgentTrace {
+  steps: AgentStepTrace[];
+  /** Why it stopped early, if it did. */
+  note: string;
+}
+
+export interface AgentInfo {
+  name: string;
+  title: string;
+  description: string;
+  tools: string[];
+}
+
+export type AgentMode = "off" | "toggle" | "always";
+
 export interface Message {
   id: string;
   session_id: string;
@@ -31,6 +70,8 @@ export interface Message {
   files?: FileRef[];
   /** Links and related topics from a web search, on assistant messages. */
   web?: WebResults | null;
+  /** How the helpers (agents) worked on this reply. */
+  agent?: AgentTrace | null;
   /** Client-only: the web search running for this reply (its query). */
   searching?: string;
   /** Client-only: message is still streaming or not yet persisted. */
@@ -61,7 +102,7 @@ export interface SessionDetail extends Session {
 
 // ---- task automation --------------------------------------------------------
 
-export type ActionKind = "email" | "event" | "document" | "workflow";
+export type ActionKind = "email" | "event" | "document" | "workflow" | "code" | "file_edit";
 /** "drafting" is client-only: the model is still writing the draft. */
 export type ActionStatus = "drafting" | "pending" | "running" | "done" | "rejected";
 
@@ -87,7 +128,33 @@ export interface WorkflowPayload {
   workflow: string;
   input: string;
 }
-export type ActionPayload = EmailPayload | EventPayload | DocumentPayload | WorkflowPayload;
+export interface CodePayload {
+  /** Only "python" runs. */
+  language: string;
+  code: string;
+  stdin: string;
+  purpose: string;
+}
+export interface FileEdit {
+  /** Exact text replaced; empty when creating the file. */
+  old: string;
+  new: string;
+}
+export interface FileEditPayload {
+  path: string;
+  create: boolean;
+  edits: FileEdit[];
+  /** Set by the server: the file version it was drafted against, and a diff to review. */
+  base_sha256: string;
+  diff: string;
+}
+export type ActionPayload =
+  | EmailPayload
+  | EventPayload
+  | DocumentPayload
+  | WorkflowPayload
+  | CodePayload
+  | FileEditPayload;
 
 /** Something the assistant drafted. It runs only after the user approves it. */
 export interface Action {
@@ -106,6 +173,14 @@ export interface Action {
     drafts_url?: string;
     download_url?: string;
     event_id?: string;
+    /** Code runs: what the program printed. */
+    stdout?: string;
+    stderr?: string;
+    exit_code?: number | null;
+    timed_out?: boolean;
+    truncated?: boolean;
+    /** File edits: the file that changed. */
+    path?: string;
   } | null;
   error: string | null;
   created_at: string;
@@ -128,9 +203,13 @@ export interface AutomationInfo {
   /** Where phone review reminders go, e.g. "SMS to +84••••••567"; empty = off. */
   notify_channels: string[];
   notify_remind_minutes: number;
+  /** A code sandbox is set up, so approved Python can run. */
+  code_runs: boolean;
+  /** A project folder is set up for the code helper. */
+  project: boolean;
 }
 
-export type ProviderName = "ollama" | "anthropic" | "echo";
+export type ProviderName = "ollama" | "anthropic" | "claude_cli" | "echo";
 
 export interface ChatConfig {
   provider: ProviderName;
@@ -141,6 +220,8 @@ export interface ChatConfig {
   provider_status: Record<string, string>;
   /** The web search engine ("searxng", "brave"); "" = web search is off on the server. */
   web_search: string;
+  /** AGENT_MODE: whether the Agents switch is shown ("toggle") or helpers always work. */
+  agent_mode: AgentMode;
 }
 
 export interface ServiceHealth {

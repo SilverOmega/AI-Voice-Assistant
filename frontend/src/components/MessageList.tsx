@@ -1,11 +1,12 @@
-import { useEffect, useRef, useState } from "react";
-import ReactMarkdown from "react-markdown";
+import { isValidElement, useEffect, useRef, useState, type ReactNode } from "react";
+import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { api } from "../lib/api";
 import { describeFile } from "../lib/files";
 import type { Action, AutomationInfo, Message } from "../lib/types";
 import { ActionCard, KIND_LABELS } from "./ActionCard";
-import { FileIcon, MicIcon, TranslateIcon } from "./icons";
+import { AgentTrace } from "./AgentTrace";
+import { FileIcon, MicIcon, PlayIcon, TranslateIcon } from "./icons";
 import { MessageTranslation, SelectionTranslator } from "./Translate";
 import { WebSources } from "./WebSources";
 
@@ -21,6 +22,8 @@ interface Props {
   onTranslateTo: (language: string) => void;
   /** Ask about a related topic from a web search; undefined while a reply is being written. */
   onAsk?: (topic: string) => void;
+  /** Turn a Python code block into a code run to review; undefined when no sandbox is set up. */
+  onRunCode?: (code: string, language: string) => void;
 }
 
 type Item = { at: string; message: Message } | { at: string; action: Action };
@@ -35,6 +38,7 @@ export function MessageList({
   translateTo,
   onTranslateTo,
   onAsk,
+  onRunCode,
 }: Props) {
   const endRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -51,7 +55,9 @@ export function MessageList({
     if (!el) return;
     const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 160;
     if (nearBottom || last?.role === "user") endRef.current?.scrollIntoView({ block: "end" });
-  }, [messages.length, last?.content, last?.role, last?.searching, last?.web, actions.length, lastAction?.status]);
+  }, [messages.length, last?.content, last?.role, last?.searching, last?.web, last?.agent, actions.length, lastAction?.status]);
+  // A helper's draft carries the user's message as its instruction: don't show that message twice.
+  const said = new Set(messages.filter((m) => m.role === "user").map((m) => m.content.trim()));
 
   if (items.length === 0) {
     return (
@@ -69,10 +75,16 @@ export function MessageList({
       <div className="mx-auto max-w-3xl space-y-5 px-4 py-6">
         {items.map((item) =>
           "message" in item ? (
-            <MessageBubble key={item.message.id} message={item.message} translateTo={translateTo} onAsk={onAsk} />
+            <MessageBubble
+              key={item.message.id}
+              message={item.message}
+              translateTo={translateTo}
+              onAsk={onAsk}
+              onRunCode={onRunCode}
+            />
           ) : (
             <div key={item.action.id} className="space-y-2">
-              <TaskRequest action={item.action} />
+              {!said.has(item.action.instruction.trim()) && <TaskRequest action={item.action} />}
               <ActionCard
                 key={`${item.action.id}:${item.action.status}`}
                 action={item.action}
@@ -94,10 +106,12 @@ function MessageBubble({
   message,
   translateTo,
   onAsk,
+  onRunCode,
 }: {
   message: Message;
   translateTo: string;
   onAsk?: (topic: string) => void;
+  onRunCode?: (code: string, language: string) => void;
 }) {
   const isUser = message.role === "user";
   const thinking = message.pending && !message.content && !message.error;
@@ -125,7 +139,12 @@ function MessageBubble({
           message.content && <p className="whitespace-pre-wrap break-words">{message.content}</p>
         ) : (
           <div className="markdown break-words">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
+            <ReactMarkdown
+              remarkPlugins={[remarkGfm]}
+              components={onRunCode && !message.pending ? runnableBlocks(onRunCode) : undefined}
+            >
+              {message.content}
+            </ReactMarkdown>
             {message.pending && <span className="ml-0.5 inline-block h-4 w-1.5 animate-pulse bg-current align-middle" />}
           </div>
         )}
@@ -157,9 +176,37 @@ function MessageBubble({
           {translated ? "Show original only" : "Translate"}
         </button>
       )}
+      {!isUser && <AgentTrace trace={message.agent} pending={message.pending} />}
       {!isUser && <WebSources web={message.web} searching={message.searching} onAsk={onAsk} />}
     </div>
   );
+}
+
+const RUNNABLE = new Set(["python", "py", "python3"]);
+
+/** Code blocks in replies; Python ones get a Run button that drafts a code run for review. */
+function runnableBlocks(onRun: (code: string, language: string) => void): Components {
+  return {
+    pre({ children, node: _node, ...rest }) {
+      const code = isValidElement<{ className?: string; children?: ReactNode }>(children) ? children.props : null;
+      const language = /language-(\w+)/.exec(code?.className ?? "")?.[1]?.toLowerCase() ?? "";
+      const text = typeof code?.children === "string" ? code.children.replace(/\n$/, "") : "";
+      return (
+        <div className="group/code relative">
+          <pre {...rest}>{children}</pre>
+          {RUNNABLE.has(language) && text && (
+            <button
+              onClick={() => onRun(text, "python")}
+              title="Run this code in the sandbox (you'll review it first)"
+              className="absolute right-1.5 top-1.5 flex items-center gap-1 rounded-md bg-slate-700/80 px-2 py-0.5 text-[11px] text-white opacity-0 hover:bg-slate-600 focus-visible:opacity-100 group-hover/code:opacity-100 pointer-coarse:opacity-100"
+            >
+              <PlayIcon width={10} height={10} /> Run
+            </button>
+          )}
+        </div>
+      );
+    },
+  };
 }
 
 /** What the user asked for, shown like their message. */

@@ -1,4 +1,4 @@
-# Runs the three backend services and the Vite dev server natively. Ctrl+C stops everything.
+# Runs the backend services (chat, voice, wakeword, Claude bridge) and the Vite dev server natively. Ctrl+C stops everything.
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 $py = Join-Path $root ".venv\Scripts\python.exe"
@@ -8,7 +8,8 @@ $env:WAKEWORD_CUSTOM_DIR = Join-Path $root "models\wakeword"
 $services = @(
     @{ name = "chat"; port = 8001 },
     @{ name = "voice"; port = 8002 },
-    @{ name = "wakeword"; port = 8003 }
+    @{ name = "wakeword"; port = 8003 },
+    @{ name = "bridge"; port = 8005 }  # Claude with your subscription (needs CLAUDE_BRIDGE_TOKEN)
 )
 $procs = @()
 try {

@@ -6,7 +6,7 @@ from typing import Literal
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-ProviderName = Literal["ollama", "anthropic", "echo"]
+ProviderName = Literal["ollama", "anthropic", "claude_cli", "echo"]
 
 DEFAULT_SYSTEM_PROMPT = (
     "You are a friendly, concise voice and chat assistant running on the user's own computer. "
@@ -43,6 +43,12 @@ class Settings(BaseSettings):
     anthropic_model: str = "claude-opus-5-5"
     anthropic_effort: Literal["low", "medium", "high", "xhigh", "max"] = "low"
     anthropic_fallbacks: bool = True
+
+    # Claude through your Claude subscription (Pro/Max) instead of an API key: Claude Code on
+    # this computer, reached through the Claude bridge (services/bridge, scripts/bridge.ps1).
+    claude_bridge_url: str = "http://127.0.0.1:8005"  # empty = off
+    claude_bridge_token: str = ""  # shared with the bridge; scripts/bridge.ps1 creates one
+    claude_cli_model: str = "claude-sonnet-5-5"
 
     # Web search for chat turns: links and related topics under replies, and results the model
     # answers from. "searxng" uses the SearXNG container in docker-compose (no account);
@@ -81,6 +87,21 @@ class Settings(BaseSettings):
     ntfy_token: str = ""
     notify_remind_minutes: int = Field(default=30, ge=0)  # remind again if still waiting; 0 = off
     app_url: str = ""  # link added to notifications, e.g. https://192.168.1.10:8443
+
+    # Agents: a lead assistant plans the request and hands parts of it to helpers (research,
+    # documents, tasks, code) that use tools, then writes the reply. "toggle" adds an Agents
+    # switch to the message box; "always" uses them for every message (small talk skips them);
+    # "off" turns them off. Helpers only read and draft: anything that sends, saves, runs code or
+    # changes a file waits for the user's approval like any other task.
+    agent_mode: Literal["off", "toggle", "always"] = "toggle"
+    agent_max_steps: int = Field(default=4, ge=1, le=10)  # helpers the lead may call per message
+    agent_max_tool_calls: int = Field(default=6, ge=1, le=30)  # tool uses per helper
+    agent_timeout_seconds: float = Field(default=180.0, ge=10.0)  # then it answers with what it has
+    # A project folder the code helper may read, and change after approval. Empty = none.
+    project_dir: str = ""
+    # The code sandbox service (services/sandbox) that runs approved Python. Empty = no code runs.
+    sandbox_url: str = ""
+    sandbox_token: str = ""
 
     # Phones, tablets and other computers reach the app over HTTPS and must enter this passcode
     # once per device. The browser on this computer (http://localhost) never needs it.

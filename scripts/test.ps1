@@ -1,9 +1,9 @@
-# Runs every test suite: three Python services + the frontend.
+# Runs every test suite: five Python services + the frontend.
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 $py = Join-Path $root ".venv\Scripts\python.exe"
 $failed = @()
-foreach ($svc in "chat", "voice", "wakeword") {
+foreach ($svc in "chat", "voice", "wakeword", "sandbox", "bridge") {
     Write-Host "`n=== $svc ===" -ForegroundColor Cyan
     Push-Location (Join-Path $root "services\$svc")
     & $py -m pytest -q; if ($LASTEXITCODE -ne 0) { $failed += $svc }

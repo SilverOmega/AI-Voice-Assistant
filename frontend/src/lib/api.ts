@@ -1,7 +1,10 @@
+import type { AgentEvent, PlanEvent, ToolEvent } from "./agentTrace";
 import { SseParser } from "./sse";
 import type {
   Action,
   ActionKind,
+  AgentInfo,
+  AgentMode,
   AppNotification,
   AuthStatus,
   AutomationInfo,
@@ -20,6 +23,23 @@ import type {
   UploadedFile,
   WebResults,
 } from "./types";
+
+/** Where Claude's key comes from: .env, added in the app, or none yet. */
+export type KeySource = "env" | "app" | null;
+
+export interface ModelList {
+  provider: string;
+  default: string;
+  models: string[];
+  /** Claude only. */
+  key_source?: KeySource;
+  /** Claude only: keys can be added from this device (the computer running the assistant). */
+  can_add_key?: boolean;
+  /** Claude subscription only: the bridge is running and Claude Code is signed in. */
+  ready?: boolean;
+  /** Claude subscription only: what's ready, or what's missing. */
+  detail?: string;
+}
 
 export const CHAT_BASE = "/chat";
 export const VOICE_BASE = "/voice";
@@ -99,10 +119,20 @@ export const api = {
     request<void>(`${CHAT_BASE}/api/sessions/${id}`, { method: "DELETE" }),
 
   getConfig: () => request<ChatConfig>(`${CHAT_BASE}/api/config`),
+  listAgents: () => request<{ mode: AgentMode; agents: AgentInfo[] }>(`${CHAT_BASE}/api/agents`),
   updateConfig: (changes: Partial<{ provider: ProviderName; model: string; system_prompt: string; temperature: number }>) =>
     request<ChatConfig>(`${CHAT_BASE}/api/config`, { method: "PATCH", body: JSON.stringify(changes) }),
-  listModels: () =>
-    request<{ provider: string; default: string; models: string[] }>(`${CHAT_BASE}/api/models`),
+  /** Models a provider offers (the active one when left out). */
+  listModels: (provider?: ProviderName) =>
+    request<ModelList>(`${CHAT_BASE}/api/models${provider ? `?provider=${provider}` : ""}`),
+  /** Add a Claude API key (this computer only). Anthropic checks it first; it never comes back. */
+  setClaudeKey: (apiKey: string) =>
+    request<{ key_source: KeySource; detail: string }>(`${CHAT_BASE}/api/providers/anthropic/key`, {
+      method: "PUT",
+      body: JSON.stringify({ api_key: apiKey }),
+    }),
+  removeClaudeKey: () =>
+    request<{ key_source: KeySource }>(`${CHAT_BASE}/api/providers/anthropic/key`, { method: "DELETE" }),
   imageUrl: (id: string) => `${CHAT_BASE}/api/images/${id}`,
   /** Translate chat text into any language, by the active model. Nothing is saved. */
   translate: (text: string, target: string) =>
@@ -132,10 +162,17 @@ export const api = {
 
   // ---- task automation: drafts run only through approveAction ---------
   automationInfo: () => request<AutomationInfo>(`${CHAT_BASE}/api/automation`),
-  draftAction: (sessionId: string, kind: ActionKind, instruction: string, now: string) =>
+  /** `payload`: a ready draft (e.g. a code block to run), stored for review without the model. */
+  draftAction: (
+    sessionId: string,
+    kind: ActionKind,
+    instruction: string,
+    now: string,
+    payload?: Record<string, unknown>,
+  ) =>
     request<Action>(`${CHAT_BASE}/api/sessions/${sessionId}/actions`, {
       method: "POST",
-      body: JSON.stringify({ kind, instruction, now }),
+      body: JSON.stringify({ kind, instruction, now, ...(payload ? { payload } : {}) }),
     }),
   testNotification: () =>
     request<{ channels: string[]; errors: string[] }>(`${CHAT_BASE}/api/notify/test`, { method: "POST" }),
@@ -209,27 +246,50 @@ export interface StreamHandlers {
   onWeb?: (web: WebResults & { error?: string }) => void;
   onDone?: (message: Message | null) => void;
   onError?: (message: string) => void;
+  /** Helpers (agents): the plan, each helper starting/finishing, each tool use. */
+  onPlan?: (plan: PlanEvent) => void;
+  onAgent?: (event: AgentEvent) => void;
+  onTool?: (event: ToolEvent) => void;
+  /** A helper stored a draft for review. */
+  onAction?: (action: Action) => void;
 }
 
-/**
- * Send a message and stream the reply. Resolves when the stream ends; abort via `signal`.
- * `language`: the language to reply in ("Vietnamese"); empty = the model follows the user.
- */
+export interface StreamOptions {
+  signal?: AbortSignal;
+  source?: Source;
+  images?: ImageUpload[];
+  /** Ids of uploaded documents. */
+  files?: string[];
+  /** The language to reply in ("Vietnamese"); empty = the model follows the user. */
+  language?: string;
+  search?: boolean;
+  /** Let the helpers work on it first. */
+  agents?: boolean;
+  /** The user's local time, YYYY-MM-DDTHH:MM, so helpers resolve "tomorrow". */
+  now?: string;
+}
+
+/** Send a message and stream the reply. Resolves when the stream ends; abort via `signal`. */
 export async function streamMessage(
   sessionId: string,
   content: string,
   handlers: StreamHandlers,
-  signal?: AbortSignal,
-  source: Source = "text",
-  images: ImageUpload[] = [],
-  files: string[] = [],
-  language = "",
-  search = false,
+  { signal, source = "text", images = [], files = [], language = "", search = false, agents = false, now }: StreamOptions = {},
 ): Promise<void> {
+  const body = {
+    content,
+    source,
+    images,
+    files,
+    search,
+    agents,
+    ...(language ? { language } : {}),
+    ...(now ? { now } : {}),
+  };
   const resp = await fetch(`${CHAT_BASE}/api/sessions/${sessionId}/messages/stream`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ content, source, images, files, search, ...(language ? { language } : {}) }),
+    body: JSON.stringify(body),
     signal,
   });
   if (!resp.ok || !resp.body) throw await failure(resp);
@@ -239,14 +299,20 @@ export async function streamMessage(
   for (;;) {
     const { value, done } = await reader.read();
     if (done) break;
-    for (const { event, data } of parser.feed(value)) {
-      const payload = JSON.parse(data);
-      if (event === "start") handlers.onStart?.(payload);
-      else if (event === "token") handlers.onToken(payload.text);
-      else if (event === "searching") handlers.onSearching?.(payload.query);
-      else if (event === "web") handlers.onWeb?.(payload);
-      else if (event === "done") handlers.onDone?.(payload.message);
-      else if (event === "error") handlers.onError?.(payload.message);
-    }
+    for (const { event, data } of parser.feed(value)) dispatchStreamEvent(event, JSON.parse(data), handlers);
   }
+}
+
+/** One chat stream event to its handler. Unknown events are ignored, so the server can add more. */
+export function dispatchStreamEvent(event: string, payload: any, handlers: StreamHandlers): void {
+  if (event === "start") handlers.onStart?.(payload);
+  else if (event === "token") handlers.onToken(payload.text);
+  else if (event === "searching") handlers.onSearching?.(payload.query);
+  else if (event === "web") handlers.onWeb?.(payload);
+  else if (event === "done") handlers.onDone?.(payload.message);
+  else if (event === "error") handlers.onError?.(payload.message);
+  else if (event === "plan") handlers.onPlan?.(payload);
+  else if (event === "agent") handlers.onAgent?.(payload);
+  else if (event === "tool") handlers.onTool?.(payload);
+  else if (event === "action") handlers.onAction?.(payload.action);
 }

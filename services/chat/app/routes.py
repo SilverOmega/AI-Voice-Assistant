@@ -15,10 +15,21 @@ import httpx
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, Response, status
 from fastapi.responses import StreamingResponse
 
-from .automation import ActionInvalid, Automation, CredentialsRejected, event_ics, validate_payload
+from .agents import SPECIALISTS, Toolbox, available_agents, available_tools
+from .automation import (
+    ActionInvalid,
+    Automation,
+    CredentialsRejected,
+    clean_draft,
+    event_ics,
+    validate_payload,
+)
 from .chat_service import ChatEvent, ChatService, SessionBusy, SessionNotFound
 from .documents import MAX_FILE_BYTES, DocumentError, extract, fetch_link
+from .auth import is_remote
 from .llm import LLMError
+from .llm.anthropic_provider import AnthropicProvider
+from .llm.claude_cli import ClaudeCliProvider
 from .notifications import NotificationCenter, shown_ip, visitor
 from .notifier import Notifier
 from .schemas import (
@@ -26,6 +37,8 @@ from .schemas import (
     ActionDraftRequest,
     ActionOut,
     ActionStatus,
+    AgentInfo,
+    AgentsOut,
     AutomationInfo,
     ChannelPrefs,
     ChatRequest,
@@ -44,6 +57,7 @@ from .schemas import (
     NotificationReport,
     NotificationSettings,
     NotifyTestOut,
+    ProviderKey,
     RuntimeConfigUpdate,
     SessionCreate,
     SessionDetail,
@@ -113,6 +127,7 @@ async def _config_out(request: Request) -> ConfigOut:
         available_providers=svc.registry.names,
         provider_status={svc.runtime.provider: detail},
         web_search=svc.search.name if svc.search else "",
+        agent_mode=svc.settings.agent_mode,
     )
 
 
@@ -125,6 +140,19 @@ async def get_config(request: Request) -> ConfigOut:
 async def update_config(body: RuntimeConfigUpdate, request: Request) -> ConfigOut:
     svc = _svc(request)
     changes = body.model_dump(exclude_unset=True)
+    if changes.get("provider") == "anthropic":
+        claude = svc.registry.get("anthropic")
+        if isinstance(claude, AnthropicProvider) and claude.key_source is None:
+            # Switching would leave every chat without an answer.
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "Claude needs an API key first. Add it from the model menu next to the microphone.",
+            )
+    if changes.get("provider") == "claude_cli" and svc.runtime.provider != "claude_cli":
+        bridge = svc.registry.get("claude_cli")
+        ok, detail = await bridge.check(changes.get("model") or bridge.default_model)
+        if not ok:
+            raise HTTPException(status.HTTP_409_CONFLICT, f"Claude (subscription) isn't ready: {detail}.")
     if "provider" in changes and changes["provider"] != svc.runtime.provider and "model" not in changes:
         changes["model"] = ""  # switching provider without a model -> use its default
     previous = (svc.runtime.provider, svc.resolved_model())
@@ -135,17 +163,71 @@ async def update_config(body: RuntimeConfigUpdate, request: Request) -> ConfigOu
 
 
 @router.get("/api/models")
-async def list_models(request: Request) -> dict:
-    """Models the active provider can serve (Ollama lists pulled models)."""
+async def list_models(request: Request, provider: str | None = None) -> dict:
+    """Models a provider can serve, the active one by default (Ollama lists pulled models)."""
     svc = _svc(request)
-    provider = svc.registry.get(svc.runtime.provider)
+    if provider is not None and provider not in svc.registry.names:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"Unknown provider '{provider}'")
+    provider = svc.registry.get(provider or svc.runtime.provider)
     models: list[str] = []
     if hasattr(provider, "list_models"):
         try:
             models = await provider.list_models()
         except Exception:
             models = []
-    return {"provider": provider.name, "default": provider.default_model, "models": models}
+    out = {"provider": provider.name, "default": provider.default_model, "models": models}
+    if isinstance(provider, AnthropicProvider):
+        # The key itself never leaves the server.
+        out["key_source"] = provider.key_source  # "env", "app" or None
+        out["can_add_key"] = not is_remote(request)
+    if isinstance(provider, ClaudeCliProvider):
+        out["ready"], out["detail"] = await provider.check(provider.default_model)
+    return out
+
+
+# ---- provider keys --------------------------------------------------------------
+
+ANTHROPIC_KEY_PREF = "anthropic_api_key"
+
+
+def _claude(request: Request) -> AnthropicProvider:
+    try:
+        provider = _svc(request).registry.get("anthropic")
+    except LLMError:
+        provider = None
+    if not isinstance(provider, AnthropicProvider):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Claude isn't available here")
+    if is_remote(request):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN, "For safety, add or remove the Claude key on the computer running the assistant."
+        )
+    return provider
+
+
+@router.put("/api/providers/anthropic/key")
+async def set_claude_key(body: ProviderKey, request: Request) -> dict:
+    """Store a Claude API key added in the app, after Anthropic accepts it."""
+    claude = _claude(request)
+    key = body.api_key.strip()
+    ok, detail = await claude.check_key(key)
+    if not ok:
+        raise HTTPException(422, detail)
+    await _svc(request).repo.set_preference(ANTHROPIC_KEY_PREF, key)
+    await claude.set_app_key(key)
+    request.app.state.health_cache.clear()
+    log.info("Claude API key added in the app")
+    return {"key_source": claude.key_source, "detail": detail}
+
+
+@router.delete("/api/providers/anthropic/key")
+async def remove_claude_key(request: Request) -> dict:
+    claude = _claude(request)
+    if _svc(request).runtime.provider == "anthropic" and claude.key_source == "app":
+        raise HTTPException(status.HTTP_409_CONFLICT, "Switch to another model before removing the Claude key.")
+    await _svc(request).repo.set_preference(ANTHROPIC_KEY_PREF, None)
+    await claude.set_app_key(None)
+    request.app.state.health_cache.clear()
+    return {"key_source": claude.key_source}
 
 
 # ---- sessions -----------------------------------------------------------------
@@ -201,7 +283,8 @@ async def _start_turn(request: Request, session_id: str, body: ChatRequest):
     files = await _attached_files(request, body)
     try:
         return await _svc(request).stream_reply(
-            session_id, body.content, body.source, images, files, body.language, body.search
+            session_id, body.content, body.source, images, files, body.language, body.search,
+            body.agents, body.now,
         )
     except SessionNotFound:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session not found") from None
@@ -237,6 +320,8 @@ async def stream_message(session_id: str, body: ChatRequest, request: Request) -
 
     Events: `start` {user_message, provider, model}, `token` {text}, `done` {message}, `error` {message}.
     With `search`: `searching` {query}, then `web` {query, links, related, error?} before the tokens.
+    With `agents`: `plan` {steps}, `agent` {step, status, ...}, `tool` {step, index, tool, status, ...},
+    `action` {action} for each draft, and `searching`/`web` for the helpers' searches, before the tokens.
     """
     events = await _start_turn(request, session_id, body)
     return ClosingStreamingResponse(
@@ -252,7 +337,8 @@ async def send_message(session_id: str, body: ChatRequest, request: Request) -> 
     files = await _attached_files(request, body)
     try:
         result = await _svc(request).reply(
-            session_id, body.content, body.source, images, files, body.language, body.search
+            session_id, body.content, body.source, images, files, body.language, body.search,
+            body.agents, body.now,
         )
     except SessionNotFound:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session not found") from None
@@ -392,6 +478,24 @@ async def automation_info(request: Request) -> AutomationInfo:
         workflows=list(auto.settings.workflows),
         notify_channels=_notifier(request).channels,
         notify_remind_minutes=auto.settings.notify_remind_minutes,
+        code_runs=auto.code_runs,
+        project=auto.project,
+    )
+
+
+@router.get("/api/agents", response_model=AgentsOut)
+async def list_agents(request: Request) -> AgentsOut:
+    """The helpers and the tools each can use with what is set up here."""
+    svc = _svc(request)
+    box = Toolbox(svc, "", "")
+    ready = {a.name for a in available_agents(box)}
+    return AgentsOut(
+        mode=svc.settings.agent_mode,
+        agents=[
+            AgentInfo(name=a.name, title=a.title, description=a.description, tools=available_tools(a, box))
+            for a in SPECIALISTS
+            if a.name in ready
+        ],
     )
 
 
@@ -418,11 +522,31 @@ async def test_notification(request: Request) -> NotifyTestOut:
 async def draft_action(
     session_id: str, body: ActionDraftRequest, request: Request, background: BackgroundTasks
 ) -> ActionOut:
-    if body.kind == "workflow" and not _automation(request).settings.workflows:
+    auto = _automation(request)
+    if body.kind == "workflow" and not auto.settings.workflows:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
             "No workflows are set up. Add WORKFLOWS to .env (see the README).",
         )
+    if body.kind == "code" and not auto.code_runs:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Code can't be run here: no code sandbox is set up. Add SANDBOX_URL to .env (see the README).",
+        )
+    if body.kind == "file_edit":
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Turn on Agents and ask the assistant to change a project file.",
+        )
+    if body.payload is not None:
+        # A ready draft, such as a code block's code: stored for review, the model isn't asked.
+        svc = _svc(request)
+        if await svc.repo.get_session(session_id) is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Session not found")
+        payload = clean_draft(body.kind, body.payload)
+        action = await svc.repo.add_action(session_id, body.kind, body.instruction.strip(), payload)
+        background.add_task(_notifications(request).review_needed, action)
+        return action
     try:
         action = await _svc(request).draft_action(
             session_id, body.kind, body.instruction.strip(), body.now

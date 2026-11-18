@@ -10,3 +10,7 @@ services/*/models/
 models/wakeword/*.onnx
 *.log
 *.tsbuildinfo
+
+# The default (empty) project folder mounted for the code helper
+workspace/*
+!workspace/.gitkeep

@@ -9,6 +9,7 @@ import { Sidebar } from "./components/Sidebar";
 import { Pet } from "./components/Pet";
 import { Toasts, type Toast } from "./components/Toasts";
 import { VoiceBar } from "./components/VoiceBar";
+import { useAgents } from "./hooks/useAgents";
 import { useChat } from "./hooks/useChat";
 import { useHealth } from "./hooks/useHealth";
 import { useLanguagePrefs } from "./hooks/useLanguage";
@@ -96,7 +97,13 @@ export default function App({ auth, onSignedOut }: Props) {
 
   const [language, updateLanguage] = useLanguagePrefs();
   const webSearch = useWebSearch();
-  const chat = useChat({ onActionChange, language: language.reply, search: webSearch.enabled });
+  const agents = useAgents();
+  const chat = useChat({
+    onActionChange,
+    language: language.reply,
+    search: webSearch.enabled,
+    agents: agents.enabled,
+  });
   const schedule = useSchedule(onRemind);
   selectRef.current = chat.selectSession;
   useEffect(() => onNotificationOpen((id) => selectRef.current(id)), []);
@@ -334,6 +341,7 @@ export default function App({ auth, onSignedOut }: Props) {
               translateTo={language.translateTo}
               onTranslateTo={(translateTo) => updateLanguage({ translateTo })}
               onAsk={chat.streaming ? undefined : (topic) => void chat.send(topic)}
+              onRunCode={automation?.code_runs ? (code, lang) => void chat.runCode(code, lang) : undefined}
             />
           </div>
 
@@ -369,6 +377,7 @@ export default function App({ auth, onSignedOut }: Props) {
             onError={chat.setError}
             dictationLanguage={language.reply ? languageCode(language.reply) : null}
             webSearch={webSearch}
+            agents={agents}
             onPhotoLimit={(attempted) =>
               api
                 .reportPhotoLimit(attempted)

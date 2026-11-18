@@ -1,13 +1,15 @@
 import { useState, type ReactNode } from "react";
 import { api } from "../lib/api";
-import type { Action, ActionKind, AutomationInfo } from "../lib/types";
-import { BoltIcon, CalendarIcon, DownloadIcon, FileIcon, MailIcon } from "./icons";
+import type { Action, ActionKind, AutomationInfo, FileEdit } from "../lib/types";
+import { BoltIcon, CalendarIcon, CodeIcon, DownloadIcon, FileIcon, MailIcon, PencilIcon } from "./icons";
 
 export const KIND_LABELS: Record<ActionKind, { title: string; icon: typeof MailIcon }> = {
   email: { title: "Email", icon: MailIcon },
   event: { title: "Calendar event", icon: CalendarIcon },
   document: { title: "Document", icon: FileIcon },
   workflow: { title: "Workflow", icon: BoltIcon },
+  code: { title: "Code run", icon: CodeIcon },
+  file_edit: { title: "File change", icon: PencilIcon },
 };
 
 interface Props {
@@ -26,7 +28,8 @@ function toFields(payload: Record<string, unknown>): Fields {
   );
 }
 
-function toPayload(kind: ActionKind, fields: Fields): Record<string, unknown> {
+function toPayload(kind: ActionKind, fields: Fields, edits: FileEdit[]): Record<string, unknown> {
+  if (kind === "file_edit") return { edits };
   if (kind !== "email") return fields;
   const list = (s = "") => s.split(/[,;\s]+/).filter(Boolean);
   return { ...fields, to: list(fields.to), cc: list(fields.cc) };
@@ -43,12 +46,14 @@ function approveLabel(kind: ActionKind, info: AutomationInfo | null): string {
   }
   if (kind === "event") return "Approve & add to schedule";
   if (kind === "document") return "Approve & save";
+  if (kind === "file_edit") return "Approve & write the file";
   return "Approve & run";
 }
 
 /** A drafted task. Nothing happens until the user presses Approve. */
 export function ActionCard({ action, info, onApprove, onReject }: Props) {
   const [fields, setFields] = useState<Fields>(() => toFields(action.payload));
+  const [edits, setEdits] = useState<FileEdit[]>(() => (action.payload.edits as FileEdit[] | undefined) ?? []);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   const { title, icon: Icon } = KIND_LABELS[action.kind];
@@ -107,6 +112,40 @@ export function ActionCard({ action, info, onApprove, onReject }: Props) {
     ];
   } else if (action.kind === "document") {
     form = [field("title", "Title"), field("content", "Content (Markdown)", { multiline: true, rows: 12 })];
+  } else if (action.kind === "code") {
+    form = [
+      fields.purpose ? (
+        <p key="purpose" className="text-sm text-slate-600 dark:text-slate-300">
+          {fields.purpose}
+        </p>
+      ) : null,
+      field("code", "Python code (runs in a sandbox: no internet, none of your files)", { multiline: true, rows: 10 }),
+      field("stdin", "Input for the program (optional)", { multiline: true, rows: 2 }),
+    ];
+  } else if (action.kind === "file_edit") {
+    const path = String(action.payload.path ?? "");
+    form = [
+      <p key="path" className="font-mono text-sm">
+        {action.payload.create ? "New file " : ""}
+        {path}
+      </p>,
+      <Diff key="diff" text={String(action.payload.diff ?? "")} />,
+      action.status === "pending" &&
+        edits.map((edit, i) => (
+          <label key={`edit-${i}`} className="block">
+            <span className="mb-0.5 block text-xs font-medium text-slate-500">
+              {edits.length > 1 ? `Change ${i + 1}: ` : ""}new text (edit before approving if you like)
+            </span>
+            <textarea
+              value={edit.new}
+              disabled={!editable}
+              rows={Math.min(12, edit.new.split("\n").length + 1)}
+              onChange={(e) => setEdits((list) => list.map((x, j) => (j === i ? { ...x, new: e.target.value } : x)))}
+              className="w-full resize-y rounded-md border border-slate-300 bg-white px-2 py-1.5 font-mono text-xs outline-none focus:border-indigo-400 dark:border-slate-700 dark:bg-slate-900"
+            />
+          </label>
+        )),
+    ];
   } else {
     form = [
       <label key="workflow" className="block">
@@ -164,7 +203,7 @@ export function ActionCard({ action, info, onApprove, onReject }: Props) {
         {action.status === "pending" && (
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <button
-              onClick={() => run(() => onApprove(action.id, toPayload(action.kind, fields)))}
+              onClick={() => run(() => onApprove(action.id, toPayload(action.kind, fields, edits)))}
               disabled={busy}
               className="rounded-lg bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
             >
@@ -180,6 +219,8 @@ export function ActionCard({ action, info, onApprove, onReject }: Props) {
             <span className="text-xs text-slate-500">Nothing happens until you approve.</span>
           </div>
         )}
+
+        {action.status === "done" && action.kind === "code" && action.result && <RunOutput result={action.result} />}
 
         {action.status === "done" && action.result && (
           <div className="mt-3 flex flex-wrap items-center gap-3 text-sm">
@@ -233,4 +274,45 @@ function StatusBadge({ status }: { status: Action["status"] }) {
   };
   const [label, cls] = styles[status];
   return <span className={`ml-auto rounded-full px-2 py-0.5 text-[11px] font-medium ${cls}`}>{label}</span>;
+}
+
+/** A unified diff, with added and removed lines coloured. */
+function Diff({ text }: { text: string }) {
+  if (!text) return null;
+  const lines = text.split("\n").filter((line) => !line.startsWith("---") && !line.startsWith("+++"));
+  return (
+    <pre className="max-h-80 overflow-auto rounded-md bg-white p-2 font-mono text-xs leading-5 dark:bg-slate-900">
+      {lines.map((line, i) => (
+        <div
+          key={i}
+          className={
+            line.startsWith("+")
+              ? "bg-emerald-50 text-emerald-800 dark:bg-emerald-500/10 dark:text-emerald-300"
+              : line.startsWith("-")
+                ? "bg-red-50 text-red-800 dark:bg-red-500/10 dark:text-red-300"
+                : line.startsWith("@@")
+                  ? "text-slate-400"
+                  : ""
+          }
+        >
+          {line || " "}
+        </div>
+      ))}
+    </pre>
+  );
+}
+
+/** What an approved code run printed. */
+function RunOutput({ result }: { result: NonNullable<Action["result"]> }) {
+  const out = result.stdout ?? "";
+  const err = result.stderr ?? "";
+  return (
+    <div className="mt-3 space-y-1.5">
+      <pre className="max-h-72 overflow-auto rounded-md bg-slate-900 p-2 font-mono text-xs text-slate-100">
+        {out || (err ? "" : "(no output)")}
+        {err && <span className="text-red-300">{out ? "\n" : ""}{err}</span>}
+      </pre>
+      {result.truncated && <p className="text-xs text-slate-500">The output was cut off: it was too long.</p>}
+    </div>
+  );
 }

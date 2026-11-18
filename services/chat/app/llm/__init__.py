@@ -12,6 +12,7 @@ from .base import (
     LLMProvider,
     normalize_turns,
 )
+from .claude_cli import ClaudeCliProvider
 from .echo import EchoProvider
 from .ollama import OllamaProvider
 
@@ -44,6 +45,11 @@ class ProviderRegistry:
                     keep_alive=settings.ollama_keep_alive,
                     num_thread=settings.ollama_num_thread,
                     max_ctx=settings.ollama_max_ctx,
+                ),
+                "claude_cli": ClaudeCliProvider(
+                    settings.claude_bridge_url,
+                    settings.claude_cli_model,
+                    token=settings.claude_bridge_token,
                 ),
                 "anthropic": AnthropicProvider(
                     settings.anthropic_model,

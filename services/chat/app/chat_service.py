@@ -7,8 +7,10 @@ import time
 from collections.abc import AsyncIterator, Sequence
 from contextlib import aclosing
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any
 
+from .agents import Orchestrator
 from .automation import clean_draft, draft_schema, draft_system_prompt
 from .config import Settings
 from .llm import (
@@ -23,9 +25,10 @@ from .llm import (
 )
 from .notifications import NotificationCenter
 from .repository import Repository
-from .schemas import ActionOut, FileRef, MessageOut, RuntimeConfig, Source, WebResults
+from .schemas import ActionOut, AgentTrace, FileRef, MessageOut, RuntimeConfig, Source, WebResults
 from .search import SearchEngine, SearchError, results_context, search_query, worth_searching
 from .translate import TranslationCache, reply_language_instruction, translate
+from .workspace import Workspace
 
 log = logging.getLogger(__name__)
 
@@ -65,7 +68,9 @@ class SessionBusy(Exception):
 
 @dataclass
 class ChatEvent:
-    event: str  # start | token | done | error
+    # start | token | done | error; searching | web with web search;
+    # plan | agent | tool | action while helpers work (see README, "Chat stream events")
+    event: str
     data: dict[str, Any] = field(default_factory=dict)
 
 
@@ -78,8 +83,10 @@ class ChatService:
         runtime: RuntimeConfig,
         notifications: NotificationCenter | None = None,
         search: SearchEngine | None = None,
+        workspace: Workspace | None = None,
     ):
         self.repo = repo
+        self.workspace = workspace
         self.notifications = notifications
         self.search = search
         self.registry = registry
@@ -125,18 +132,34 @@ class ChatService:
         files: Sequence[FileRef] = (),
         language: str | None = None,
         search: bool = False,
+        agents: bool = False,
+        now: str | None = None,
     ) -> AsyncIterator[ChatEvent]:
         """Run one turn. Raises SessionNotFound / SessionBusy before the first event.
 
         `language`: the language to reply in; None leaves it to the model (it follows the user).
         `search`: look the message up on the web first and answer from the results.
+        `agents`: let the helpers work on it first (see `use_agents`).
+        `now`: the user's local time, YYYY-MM-DDTHH:MM.
         """
         if await self.repo.get_session(session_id) is None:
             raise SessionNotFound(session_id)
         lock = self._lock_for(session_id)
         if lock.locked():
             raise SessionBusy(session_id)
-        return self._run_turn(lock, session_id, content.strip(), source, images, files, language, search)
+        content = content.strip()
+        helpers = self.use_agents(agents, content, files)
+        return self._run_turn(lock, session_id, content, source, images, files, language, search, helpers, now)
+
+    def use_agents(self, asked: bool, content: str, files: Sequence[FileRef] = ()) -> bool:
+        """Helpers work on a message when the user turned them on for it, or on every message
+        with AGENT_MODE=always, where small talk ("thanks!") skips them to stay quick."""
+        mode = self.settings.agent_mode
+        if mode == "off":
+            return False
+        if asked:
+            return True
+        return mode == "always" and (bool(files) or worth_searching(content))
 
     async def _run_turn(
         self,
@@ -148,10 +171,13 @@ class ChatService:
         files: Sequence[FileRef],
         language: str | None,
         search: bool,
+        helpers: bool = False,
+        now: str | None = None,
     ) -> AsyncIterator[ChatEvent]:
         parts: list[str] = []
         saved: MessageOut | None = None
         web: WebResults | None = None
+        team: Orchestrator | None = None
         # Acquired inside the generator so an un-iterated generator can never leak the lock.
         await lock.acquire()
         try:
@@ -164,8 +190,16 @@ class ChatService:
                 {"user_message": user_msg.model_dump(mode="json"), "provider": provider.name, "model": model},
             )
             system = self.runtime.system_prompt
+            if helpers:
+                team = Orchestrator(self, provider, model, session_id, content, _local_now(now))
+                async with aclosing(team.run(turns)) as work:
+                    async for event in work:
+                        yield event
+                web = team.web
+                if team.worked:
+                    system = f"{system}\n\n{team.responder_context(spoken=source == 'voice')}".strip()
             # Pictures and documents are what the message is about: the web would only add noise.
-            if search and self.search and not images and not files and worth_searching(content):
+            elif search and self.search and not images and not files and worth_searching(content):
                 query = search_query(content)
                 yield ChatEvent("searching", {"query": query})
                 web, failure = await self._web_search(query)
@@ -191,20 +225,20 @@ class ChatService:
                     yield ChatEvent("token", {"text": text})
                     if text == TRUNCATED_NOTE:
                         await self._notify_truncated(session_id, params.max_tokens)
-            saved = await self._save(session_id, parts, source, web)
+            saved = await self._save(session_id, parts, source, web, _trace(team))
             log.info(
                 "turn complete session=%s provider=%s chars=%d secs=%.2f",
                 session_id, provider.name, len("".join(parts)), time.perf_counter() - started,
             )
             yield ChatEvent("done", {"message": saved.model_dump(mode="json") if saved else None})
         except LLMError as exc:
-            saved = await self._save(session_id, parts, source, web)
+            saved = await self._save(session_id, parts, source, web, _trace(team))
             if isinstance(exc, LLMAuthError):
                 await self._notify_rejected(exc, session_id)
             yield ChatEvent("error", {"message": str(exc)})
         except Exception:
             log.exception("unexpected error during chat turn")
-            saved = await self._save(session_id, parts, source, web)
+            saved = await self._save(session_id, parts, source, web, _trace(team))
             yield ChatEvent("error", {"message": "Unexpected server error while generating a reply."})
         finally:
             try:
@@ -212,7 +246,7 @@ class ChatService:
                 # Under anyio (Starlette) cancellation is level-triggered, so this await can
                 # itself raise CancelledError; the shield lets the save finish regardless.
                 if saved is None and parts:
-                    await asyncio.shield(self._save(session_id, parts, source, web))
+                    await asyncio.shield(self._save(session_id, parts, source, web, _trace(team)))
             finally:
                 lock.release()
 
@@ -235,13 +269,18 @@ class ChatService:
         )
 
     async def _save(
-        self, session_id: str, parts: list[str], source: Source, web: WebResults | None = None
+        self,
+        session_id: str,
+        parts: list[str],
+        source: Source,
+        web: WebResults | None = None,
+        agent: AgentTrace | None = None,
     ) -> MessageOut | None:
         text = "".join(parts).strip()
         if not text:
             return None
         found = web if web and (web.links or web.related) else None
-        msg = await self.repo.add_message(session_id, "assistant", text, source, web=found)
+        msg = await self.repo.add_message(session_id, "assistant", text, source, web=found, agent=agent)
         parts.clear()
         return msg
 
@@ -339,10 +378,14 @@ class ChatService:
         files: Sequence[FileRef] = (),
         language: str | None = None,
         search: bool = False,
+        agents: bool = False,
+        now: str | None = None,
     ) -> dict:
         """Non-streaming variant: collect the whole turn."""
         user_message = assistant_message = None
-        events = await self.stream_reply(session_id, content, source, images, files, language, search)
+        events = await self.stream_reply(
+            session_id, content, source, images, files, language, search, agents, now
+        )
         async with aclosing(events):
             async for event in events:
                 if event.event == "start":
@@ -352,3 +395,16 @@ class ChatService:
                 elif event.event == "error":
                     raise LLMError(event.data["message"])
         return {"user_message": user_message, "assistant_message": assistant_message}
+
+
+def _trace(team: Orchestrator | None) -> AgentTrace | None:
+    return team.trace if team and team.worked else None
+
+
+def _local_now(now: str | None) -> datetime:
+    if now:
+        try:
+            return datetime.strptime(now[:16], "%Y-%m-%dT%H:%M")
+        except ValueError:
+            pass
+    return datetime.now()
