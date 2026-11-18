@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Runs every test suite: three Python services + the frontend.
+# Runs every test suite: four Python services + the frontend.
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PY="$ROOT/.venv/bin/python"
 failed=()
-for svc in chat voice wakeword; do
+for svc in chat voice wakeword sandbox bridge; do
   echo -e "\n=== $svc ==="
   (cd "$ROOT/services/$svc" && "$PY" -m pytest -q) || failed+=("$svc")
 done

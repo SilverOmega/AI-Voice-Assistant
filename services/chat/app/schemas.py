@@ -83,6 +83,47 @@ class WebResults(BaseModel):
     related: list[str] = []
 
 
+AgentStatus = Literal["waiting", "running", "done", "failed", "skipped"]
+
+
+class ToolTrace(BaseModel):
+    """One tool a helper used, as shown under the reply."""
+
+    tool: str
+    input: str = ""  # short preview of the arguments
+    output: str = ""  # short preview of the result
+    status: AgentStatus = "done"
+    action_id: str | None = None  # the draft it created, if any
+
+
+class AgentStepTrace(BaseModel):
+    agent: str  # e.g. "researcher"
+    title: str  # e.g. "Researcher"
+    task: str
+    status: AgentStatus = "running"
+    summary: str = ""
+    tools: list[ToolTrace] = []
+
+
+class AgentTrace(BaseModel):
+    """How the helpers worked on a reply."""
+
+    steps: list[AgentStepTrace] = []
+    note: str = ""  # e.g. why it stopped early
+
+
+class AgentInfo(BaseModel):
+    name: str
+    title: str
+    description: str
+    tools: list[str]
+
+
+class AgentsOut(BaseModel):
+    mode: Literal["off", "toggle", "always"]
+    agents: list[AgentInfo]
+
+
 class MessageOut(BaseModel):
     id: str
     session_id: str
@@ -93,6 +134,7 @@ class MessageOut(BaseModel):
     images: list[ImageRef] = []
     files: list[FileRef] = []
     web: WebResults | None = None
+    agent: AgentTrace | None = None
 
 
 class SessionOut(BaseModel):
@@ -127,6 +169,10 @@ class ChatRequest(BaseModel):
     # Search the web for the message and answer from the results. Skipped for small talk
     # ("thanks") and for messages with pictures or documents.
     search: bool = False
+    # Let the helpers (agents) work on it. Ignored when AGENT_MODE is off; always on with "always".
+    agents: bool = False
+    # The user's local time, so helpers resolve "tomorrow at 3pm". Defaults to the server's.
+    now: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}")
 
     @field_validator("language")
     @classmethod
@@ -192,11 +238,18 @@ class RuntimeConfigUpdate(BaseModel):
     temperature: float | None = Field(default=None, ge=0.0, le=2.0)
 
 
+class ProviderKey(BaseModel):
+    """An API key added in the app. Stored on this computer, never sent back to the browser."""
+
+    api_key: str = Field(min_length=20, max_length=500, pattern=r"^\s*\S+\s*$")
+
+
 class ConfigOut(RuntimeConfig):
     available_providers: list[ProviderName]
     provider_status: dict[str, str]
     # The web search engine ("searxng", "brave"), or "" when web search is off.
     web_search: str = ""
+    agent_mode: Literal["off", "toggle", "always"] = "off"
 
 
 class HealthOut(BaseModel):
@@ -210,7 +263,7 @@ class HealthOut(BaseModel):
 
 # ---- task automation ------------------------------------------------------------
 
-ActionKind = Literal["email", "event", "document", "workflow"]
+ActionKind = Literal["email", "event", "document", "workflow", "code", "file_edit"]
 ActionStatus = Literal["pending", "running", "done", "rejected"]
 
 
@@ -241,11 +294,34 @@ class WorkflowDraft(BaseModel):
     input: str = Field(default="", description="What the workflow should do or act on")
 
 
+class CodeDraft(BaseModel):
+    language: str = Field(default="python", description='Programming language; only "python" runs')
+    code: str = Field(default="", description="The complete program to run")
+    stdin: str = Field(default="", description="Text given to the program as input, or empty")
+    purpose: str = Field(default="", description="One line on what running it shows")
+
+
+class FileEdit(BaseModel):
+    old: str = Field(default="", description="Exact text to replace, copied from the file; empty for a new file")
+    new: str = Field(default="", description="The text to put in its place")
+
+
+class FileEditDraft(BaseModel):
+    path: str = Field(default="", description="File path inside the project folder, e.g. src/app.py")
+    create: bool = Field(default=False, description="True to create a new file")
+    edits: list[FileEdit] = []
+    # Filled in by the server when the draft is made, not by the model.
+    base_sha256: str = ""  # the file as it was, so a later change is noticed before writing
+    diff: str = ""  # unified diff for the review card
+
+
 DRAFT_MODELS: dict[str, type[BaseModel]] = {
     "email": EmailDraft,
     "event": EventDraft,
     "document": DocumentDraft,
     "workflow": WorkflowDraft,
+    "code": CodeDraft,
+    "file_edit": FileEditDraft,
 }
 
 
@@ -254,6 +330,8 @@ class ActionDraftRequest(BaseModel):
     instruction: str = Field(min_length=1, max_length=8_000)
     # The user's local time, so "tomorrow at 3pm" resolves correctly.
     now: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}")
+    # A ready draft (e.g. the code of a code block): stored for review without asking the model.
+    payload: dict[str, Any] | None = None
 
 
 class ActionApprove(BaseModel):
@@ -290,6 +368,8 @@ class AutomationInfo(BaseModel):
     # Where review reminders go, e.g. ["SMS to +84•••••567"]; empty = phone notifications off.
     notify_channels: list[str] = []
     notify_remind_minutes: int = 0
+    code_runs: bool = False  # a code sandbox is set up (SANDBOX_URL)
+    project: bool = False  # a project folder is set up (PROJECT_DIR)
 
 
 class NotifyTestOut(BaseModel):

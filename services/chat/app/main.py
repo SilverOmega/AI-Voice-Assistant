@@ -15,11 +15,14 @@ from .llm import ProviderRegistry
 from .notifications import NotificationCenter
 from .notifier import Notifier
 from .repository import Repository
-from .routes import router
+from .llm.anthropic_provider import AnthropicProvider
+from .routes import ANTHROPIC_KEY_PREF, router
 from .schemas import RuntimeConfig
 from .search import engine_from_settings
+from .workspace import Workspace
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+log = logging.getLogger(__name__)
 
 
 def create_app(
@@ -43,9 +46,17 @@ def create_app(
         app.state.notifier = Notifier(settings)
         app.state.notifications = NotificationCenter(repo, app.state.notifier)
         search = engine_from_settings(settings)
-        app.state.chat = ChatService(repo, providers, settings, runtime, app.state.notifications, search)
+        workspace = Workspace(settings.project_dir) if settings.project_dir else None
+        if workspace and not workspace.available:
+            log.warning("PROJECT_DIR %s is not a folder; the code helper won't see a project", settings.project_dir)
+        app.state.chat = ChatService(
+            repo, providers, settings, runtime, app.state.notifications, search, workspace
+        )
+        claude = providers.get("anthropic") if "anthropic" in providers.names else None
+        if isinstance(claude, AnthropicProvider):
+            await claude.set_app_key(await repo.get_preference(ANTHROPIC_KEY_PREF))
         app.state.chat.start_warm_up()
-        app.state.automation = Automation(repo, settings)
+        app.state.automation = Automation(repo, settings, workspace=workspace)
         reminders = asyncio.create_task(
             app.state.notifications.remind_loop(settings.notify_remind_minutes)
         )

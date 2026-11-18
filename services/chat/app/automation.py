@@ -22,8 +22,11 @@ from pydantic import ValidationError
 from .config import Settings
 from .repository import Repository
 from .schemas import DRAFT_MODELS, ActionOut
+from .workspace import Workspace, WorkspaceError, edits_from
 
 LOCAL_TIME = "%Y-%m-%dT%H:%M"
+RUNNABLE_LANGUAGES = {"python"}
+MAX_CODE_CHARS = 100_000
 _EMAIL = re.compile(r"^[^@\s,;<>]+@[^@\s,;<>]+\.[^@\s,;<>]+$")
 
 DRAFT_PROMPTS = {
@@ -42,6 +45,11 @@ DRAFT_PROMPTS = {
     "workflow": (
         "Pick the workflow that matches the request and describe in 'input' what it should do."
     ),
+    "code": (
+        "Write a complete, self-contained Python program that does what the user asked and "
+        "prints its results. Use only the standard library; it runs without network access."
+    ),
+    "file_edit": "Describe the change to the project file.",
 }
 
 
@@ -139,14 +147,40 @@ def validate_payload(kind: str, payload: dict[str, Any], workflows: dict[str, st
     elif kind == "workflow":
         if draft["workflow"] not in workflows:
             raise ActionInvalid(f"Unknown workflow '{draft['workflow']}'.")
+    elif kind == "code":
+        draft["language"] = draft["language"].strip().lower() or "python"
+        if draft["language"] not in RUNNABLE_LANGUAGES:
+            raise ActionInvalid(f"Only Python code can be run, not {draft['language']}.")
+        if not draft["code"].strip():
+            raise ActionInvalid("There is no code to run.")
+        if len(draft["code"]) > MAX_CODE_CHARS:
+            raise ActionInvalid("The code is too long to run here.")
+    elif kind == "file_edit":
+        if not draft["edits"]:
+            raise ActionInvalid("The edit has no changes.")
     return draft
 
 
 class Automation:
-    def __init__(self, repo: Repository, settings: Settings, http: httpx.AsyncClient | None = None):
+    def __init__(
+        self,
+        repo: Repository,
+        settings: Settings,
+        http: httpx.AsyncClient | None = None,
+        workspace: Workspace | None = None,
+    ):
         self.repo = repo
         self.settings = settings
         self._http = http or httpx.AsyncClient(timeout=httpx.Timeout(15.0))
+        self.workspace = workspace
+
+    @property
+    def code_runs(self) -> bool:
+        return bool(self.settings.sandbox_url)
+
+    @property
+    def project(self) -> bool:
+        return self.workspace is not None and self.workspace.available
 
     @property
     def email_delivery(self) -> str:
@@ -172,7 +206,60 @@ class Automation:
         if action.kind == "document":
             doc_id = await self.repo.add_document(action.id, payload["title"], payload["content"])
             return {"message": "Document saved.", "download_url": f"/api/documents/{doc_id}/download"}
+        if action.kind == "code":
+            return await self._run_code(payload)
+        if action.kind == "file_edit":
+            return await self._edit_file(action, payload)
         return await self._workflow(action, payload)
+
+    async def _run_code(self, p: dict[str, Any]) -> dict[str, Any]:
+        """Run approved code in the sandbox service: no network, no files of yours, time and
+        memory limits."""
+        if not self.code_runs:
+            raise ActionInvalid("Code can't be run here: no code sandbox is set up (SANDBOX_URL).")
+        url = self.settings.sandbox_url.rstrip("/") + "/run"
+        headers = {"Authorization": f"Bearer {self.settings.sandbox_token}"} if self.settings.sandbox_token else {}
+        body = {"language": p["language"], "code": p["code"], "stdin": p["stdin"]}
+        try:
+            resp = await self._http.post(url, json=body, headers=headers, timeout=httpx.Timeout(120.0, connect=5.0))
+        except httpx.HTTPError as exc:
+            raise ActionInvalid(f"The code sandbox could not be reached: {exc.__class__.__name__}.") from exc
+        if resp.status_code == 401:
+            raise ActionInvalid("The code sandbox refused the request. Check SANDBOX_TOKEN.")
+        if resp.status_code >= 400:
+            raise ActionInvalid(f"The code sandbox failed with HTTP {resp.status_code}.")
+        out = resp.json()
+        if out.get("timed_out"):
+            message = f"Stopped after {out.get('duration_ms', 0) / 1000:.1f} s: it took too long."
+        else:
+            message = f"Ran in {out.get('duration_ms', 0) / 1000:.1f} s, exit code {out.get('exit_code')}."
+        return {
+            "message": message,
+            "stdout": out.get("stdout", ""),
+            "stderr": out.get("stderr", ""),
+            "exit_code": out.get("exit_code"),
+            "timed_out": bool(out.get("timed_out")),
+            "truncated": bool(out.get("truncated")),
+        }
+
+    async def _edit_file(self, action: ActionOut, p: dict[str, Any]) -> dict[str, Any]:
+        """Write an approved edit. The path, and the file version it was drafted against, come
+        from the stored draft; the user's review may only change the replacement text."""
+        if not self.project:
+            raise ActionInvalid("No project folder is set up (PROJECT_DIR), so files can't be changed.")
+        assert self.workspace is not None
+        drafted = action.payload
+        try:
+            message = await asyncio.to_thread(
+                self.workspace.apply_edit,
+                drafted.get("path", ""),
+                edits_from(p),
+                bool(drafted.get("create")),
+                drafted.get("base_sha256", ""),
+            )
+        except WorkspaceError as exc:
+            raise ActionInvalid(str(exc)) from exc
+        return {"message": message, "path": drafted.get("path", "")}
 
     async def _email(self, p: dict[str, Any]) -> dict[str, Any]:
         recipients = ", ".join(p["to"] + p["cc"])

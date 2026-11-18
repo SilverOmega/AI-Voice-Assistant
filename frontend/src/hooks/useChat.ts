@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { applyAgent, applyPlan, applyTool } from "../lib/agentTrace";
 import { api, streamMessage } from "../lib/api";
 import type { PreparedImage } from "../lib/images";
 import { localNow } from "../lib/notify";
@@ -24,10 +25,12 @@ interface Options {
   language?: string;
   /** Look questions up on the web and show links and related topics under replies. */
   search?: boolean;
+  /** Let the helpers (agents) work on messages before the reply. */
+  agents?: boolean;
 }
 
 /** Sessions, the active conversation, text + voice message streaming, and task drafts. */
-export function useChat({ onActionChange, language = "", search = false }: Options = {}) {
+export function useChat({ onActionChange, language = "", search = false, agents = false }: Options = {}) {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -44,6 +47,8 @@ export function useChat({ onActionChange, language = "", search = false }: Optio
   languageRef.current = language;
   const searchRef = useRef(search);
   searchRef.current = search;
+  const agentsRef = useRef(agents);
+  agentsRef.current = agents;
 
   const refreshSessions = useCallback(async () => {
     try {
@@ -146,13 +151,26 @@ export function useChat({ onActionChange, language = "", search = false }: Optio
               if (error) setError(error);
             },
             onError: (message) => updateLastAssistant((m) => ({ ...m, error: message })),
+            onPlan: (plan) => updateLastAssistant((m) => ({ ...m, agent: applyPlan(m.agent, plan) })),
+            onAgent: (event) => updateLastAssistant((m) => ({ ...m, agent: applyAgent(m.agent, event) })),
+            onTool: (event) => updateLastAssistant((m) => ({ ...m, agent: applyTool(m.agent, event) })),
+            onAction: (action) => {
+              // A helper's draft: its review card shows up while the reply is still coming.
+              if (activeIdRef.current === sessionId) {
+                setActions((list) => (list.some((a) => a.id === action.id) ? list : [...list, action]));
+              }
+              onActionChangeRef.current?.(action);
+            },
           },
-          controller.signal,
-          "text",
-          images.map((i) => ({ media_type: i.mediaType, data: i.data })),
-          files.map((f) => f.id),
-          languageRef.current,
-          searchRef.current,
+          {
+            signal: controller.signal,
+            images: images.map((i) => ({ media_type: i.mediaType, data: i.data })),
+            files: files.map((f) => f.id),
+            language: languageRef.current,
+            search: searchRef.current,
+            agents: agentsRef.current,
+            now: localNow(),
+          },
         );
         updateLastAssistant((m) => ({ ...m, pending: false }));
         await Promise.all([loadSession(sessionId), refreshSessions()]);
@@ -215,6 +233,28 @@ export function useChat({ onActionChange, language = "", search = false }: Optio
       }
     },
     [streaming, drafting, ensureSession, refreshSessions],
+  );
+
+  /** A code block from a reply, as a code run to review. The model isn't asked again. */
+  const runCode = useCallback(
+    async (code: string, language: string) => {
+      if (drafting) return;
+      setError(null);
+      try {
+        const sessionId = await ensureSession();
+        const action = await api.draftAction(sessionId, "code", "Run this code", localNow(), {
+          language,
+          code,
+          stdin: "",
+          purpose: "Run a code block from the reply",
+        });
+        if (activeIdRef.current === sessionId) setActions((list) => [...list, action]);
+        onActionChangeRef.current?.(action);
+      } catch (err) {
+        setError(`Couldn't prepare the run: ${(err as Error).message}`);
+      }
+    },
+    [drafting, ensureSession],
   );
 
   /** Runs the action with the user's edits. Throws (for the card to show) if it is invalid. */
@@ -296,6 +336,7 @@ export function useChat({ onActionChange, language = "", search = false }: Optio
     stop,
     startPlan,
     draftTask,
+    runCode,
     approveAction,
     rejectAction,
     voice,

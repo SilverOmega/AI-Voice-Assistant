@@ -36,9 +36,13 @@ def review_message(action: ActionOut, reminder: bool = False) -> tuple[str, str]
         what = f'Event "{_clip(p.get("title", ""))}" at {p.get("start") or "a time to pick"}'
     elif action.kind == "document":
         what = f'Document "{_clip(p.get("title", ""))}"'
+    elif action.kind == "code":
+        what = f'Code to run: "{_clip(p.get("purpose") or "Python program")}"'
+    elif action.kind == "file_edit":
+        what = f'Change to {p.get("path", "a project file")}'
     else:
         what = f'Workflow "{p.get("workflow", "")}"'
-    verb = "sent" if action.kind == "email" else "saved" if action.kind != "workflow" else "run"
+    verb = {"email": "sent", "workflow": "run", "code": "run", "file_edit": "changed"}.get(action.kind, "saved")
     title = ("Reminder: " if reminder else "") + f"review before it's {verb}"
     return title, f"{what}. Nothing is {verb} until you approve it in your assistant."
 

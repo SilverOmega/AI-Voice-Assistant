@@ -265,3 +265,21 @@ async def test_ollama_requests_carry_load_options(num_thread, load_options):
     assert bodies[1]["keep_alive"] == "1h"
     assert bodies[1]["options"] == {**load_options, "temperature": 0.5, "num_predict": 10}
     await provider.aclose()
+
+
+async def test_models_per_provider(tmp_path):
+    from app.llm.anthropic_provider import AnthropicProvider
+
+    settings = Settings(database_path=str(tmp_path / "m.db"), llm_provider="ollama")
+    registry = ProviderRegistry(
+        {"ollama": RecordingProvider(), "anthropic": AnthropicProvider("claude-sonnet-5-5"), "echo": EchoProvider(delay=0)}
+    )
+    app = create_app(settings, registry)
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as c:
+            claude = (await c.get("/api/models", params={"provider": "anthropic"})).json()
+            assert claude["provider"] == "anthropic"
+            assert claude["models"][0] == "claude-sonnet-5-5"
+            assert "claude-opus-5-5" in claude["models"]
+            assert (await c.get("/api/models")).json()["provider"] == "ollama"
+            assert (await c.get("/api/models", params={"provider": "nope"})).status_code == 404

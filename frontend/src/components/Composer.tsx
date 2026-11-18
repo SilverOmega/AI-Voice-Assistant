@@ -6,7 +6,20 @@ import { MAX_IMAGES, imageFiles, prepareImage, type PreparedImage } from "../lib
 import { requestNotifyPermission } from "../lib/notify";
 import type { ActionKind, AutomationInfo, UploadedFile } from "../lib/types";
 import { KIND_LABELS } from "./ActionCard";
-import { BoltIcon, FileIcon, GlobeIcon, ImageIcon, LinkIcon, MicIcon, PaperclipIcon, PawIcon, StopIcon, XIcon } from "./icons";
+import { ModelPicker } from "./ModelPicker";
+import {
+  BoltIcon,
+  FileIcon,
+  GlobeIcon,
+  ImageIcon,
+  LinkIcon,
+  MicIcon,
+  PaperclipIcon,
+  PawIcon,
+  StopIcon,
+  TeamIcon,
+  XIcon,
+} from "./icons";
 
 interface Props {
   streaming: boolean;
@@ -23,6 +36,8 @@ interface Props {
   dictationLanguage?: string | null;
   /** Web search for questions: on or off on this device, and whether the server has it. */
   webSearch?: { on: boolean; available: boolean | null; toggle: () => void };
+  /** Helpers (agents): on or off on this device; the switch shows only with AGENT_MODE=toggle. */
+  agents?: { on: boolean; available: boolean; toggle: () => void };
 }
 
 /** A document in the message box: uploading (no `file` yet) or read by the server. */
@@ -40,6 +55,7 @@ const TASKS: { kind: ActionKind; label: string; placeholder: string }[] = [
   { kind: "event", label: "Add to my schedule", placeholder: "What, when and where? e.g. Dentist tomorrow at 3pm" },
   { kind: "document", label: "Compile a document", placeholder: "What should it cover? e.g. Summarize this chat as meeting notes" },
   { kind: "workflow", label: "Run a workflow", placeholder: "What should the workflow do?" },
+  { kind: "code", label: "Run Python code", placeholder: "What should the program do? e.g. Count the primes below 1000" },
 ];
 
 let nextKey = 0;
@@ -67,6 +83,7 @@ export function Composer({
   onPhotoLimit,
   dictationLanguage = null,
   webSearch,
+  agents,
 }: Props) {
   const [text, setText] = useState("");
   const [task, setTask] = useState<ActionKind | null>(null);
@@ -386,13 +403,15 @@ export function Composer({
               >
                 {TASKS.map(({ kind, label }) => {
                   const Icon = KIND_LABELS[kind].icon;
-                  const unavailable = kind === "workflow" && !automation?.workflows.length;
+                  const unavailable =
+                    (kind === "workflow" && !automation?.workflows.length) || (kind === "code" && !automation?.code_runs);
+                  const setting = kind === "code" ? "SANDBOX_URL" : "WORKFLOWS";
                   return (
                     <button
                       key={kind}
                       role="menuitem"
                       disabled={unavailable}
-                      title={unavailable ? "Add WORKFLOWS to .env to enable (see the README)" : undefined}
+                      title={unavailable ? `Add ${setting} to .env to enable (see the README)` : undefined}
                       onClick={() => {
                         setTask(kind);
                         setMenu(null);
@@ -488,6 +507,26 @@ export function Composer({
               <GlobeIcon />
             </button>
           )}
+          {agents?.available && (
+            <button
+              onClick={agents.toggle}
+              disabled={task !== null}
+              aria-pressed={agents.on}
+              aria-label="Agents"
+              title={
+                agents.on
+                  ? "Agents are on: helpers research, read documents, draft tasks and work on code before the reply. Slower. Click to turn off."
+                  : "Agents are off. Click to let helpers research, read documents, draft tasks and work on code first."
+              }
+              className={`rounded-xl p-2 disabled:opacity-40 ${
+                agents.on
+                  ? "bg-violet-50 text-violet-600 hover:bg-violet-100 dark:bg-violet-950/60 dark:text-violet-300 dark:hover:bg-violet-900/60"
+                  : "text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+              }`}
+            >
+              <TeamIcon />
+            </button>
+          )}
           <button
             onClick={toggleDictation}
             disabled={dictation === "transcribing"}
@@ -503,6 +542,7 @@ export function Composer({
               {dictation === "transcribing" ? <Spinner /> : <MicIcon />}
             </span>
           </button>
+          <ModelPicker disabled={streaming || drafting} onError={onError} />
           {streaming ? (
             <button
               onClick={onStop}

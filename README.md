@@ -1,6 +1,6 @@
 # Local Chat & Voice Assistant
 
-A private AI assistant that runs on your own computer. Type to it, talk to it, or wake it with a phrase. Speech recognition, speech synthesis and wake-word detection all run locally. The language model can also be local (Ollama), or you can point it at Claude.
+A private AI assistant that runs on your own computer. Type to it, talk to it, or wake it with a phrase. Speech recognition, speech synthesis and wake-word detection all run locally. The language model can also be local (Ollama), or you can point it at Claude, with an API key or with your Claude subscription.
 
 - **Text chat** with streaming replies, markdown rendering and persistent conversation history.
 - **Voice conversation**: speech-to-text (faster-whisper), then the LLM, then text-to-speech (Piper). Replies are spoken sentence by sentence while the model is still writing, so speech starts quickly.
@@ -12,6 +12,7 @@ A private AI assistant that runs on your own computer. Type to it, talk to it, o
 - **Pictures**: attach up to 4 images per message (button, paste or drag and drop) and ask about them. Needs a vision model such as `gemma3:4b`, or Claude.
 - **Interrupt**: a Stop button, plus optional barge-in (talk over the assistant).
 - **Tasks with review**: draft an email, add an event to your schedule, compile a document (for example, notes from the current chat), or trigger a workflow webhook. The assistant only drafts. You get a notification, review and edit the draft, and nothing is sent, saved or run until you press **Approve**.
+- **Agents**: turn on helpers that work on a message before the reply: a researcher that searches the web, a document reader, a task planner and a coder that can read your project folder, propose file changes as diffs and test Python in a locked-down sandbox. They only read and draft; every email, event, code run or file change waits for your approval.
 - **Sessions**: create, rename and delete conversations. Voice turns go into the same history.
 - **Runtime settings**: switch provider, model, system prompt and temperature without restarting.
 - **Compact chat window**: the chat sits in a floating card. Conversations, plans, the schedule, service status and Settings are in the drawer behind the person icon. The pop-out icon opens the chat in its own small window.
@@ -40,10 +41,12 @@ A private AI assistant that runs on your own computer. Type to it, talk to it, o
 
 | Service | Responsibility | Key endpoints |
 |---|---|---|
-| `services/chat` | Conversations, history (SQLite), LLM streaming, web search, translation, runtime config | `POST /api/translate`, `GET/POST /api/sessions`, `GET/PATCH/DELETE /api/sessions/{id}`, `POST /api/sessions/{id}/messages[/stream]`, `GET/PATCH /api/config`, `GET /api/models`, `GET /health` |
+| `services/chat` | Conversations, history (SQLite), LLM streaming, agents, tasks, web search, translation, runtime config | `POST /api/translate`, `GET/POST /api/sessions`, `GET/PATCH/DELETE /api/sessions/{id}`, `POST /api/sessions/{id}/messages[/stream]`, `POST /api/sessions/{id}/actions`, `POST /api/actions/{id}/approve\|reject`, `GET /api/agents`, `GET/PATCH /api/config`, `GET /api/models`, `GET /health` |
 | `services/voice` | Endpointing, STT, TTS, orchestration of a voice turn | `WS /ws/voice`, `POST /api/stt`, `POST /api/tts`, `GET /api/voices`, `GET /health` |
 | `searxng` | Web search for the chat service (Docker only, no published port) | `GET /search?format=json` |
 | `services/wakeword` | Always-on wake-phrase detection | `WS /ws/wakeword`, `GET /api/models`, `GET /health` |
+| `services/sandbox` | Runs approved Python for the code helper (Docker only: no internet, no published port) | `POST /run`, `GET /health` |
+| `services/bridge` | Claude with your subscription: runs Claude Code on this computer for the chat service (native only, 127.0.0.1:8005) | `POST /v1/messages`, `GET /health` |
 | `frontend` | UI, mic capture, playback, voice-mode state machine | — |
 
 Interactive API docs are at `http://localhost:800{1,2,3}/docs` while the services run.
@@ -137,6 +140,16 @@ If the computer's address changes, run the script again and restart the frontend
   - Documents are saved and downloadable as Markdown.
   - When a draft is ready you get an in-app alert, and a desktop notification if the tab is in the background (allow notifications when the browser asks). Chats with drafts waiting show an amber dot.
   - **On your phone:** set `NOTIFY_PHONE` (SMS through Twilio) or `NTFY_TOPIC` (free push through the ntfy app) to get a text whenever a task needs review, and one more reminder if it's still waiting after `NOTIFY_REMIND_MINUTES`. The text names the task (for example *Email to anna@example.com: "Running late"*). It only reminds you; approving still happens in the app. Settings → *Notifications* has a **Send test notification** button.
+- **Agents:** the team button next to the globe lets helpers work on a message before the assistant answers (off by default, kept per device). A lead assistant decides who should help, hands each a task, and writes the reply from what they report:
+  - **Researcher** searches the web and reads pages. Its links appear under the reply as with web search.
+  - **Document reader** reads, quotes and translates the documents attached in the chat.
+  - **Task planner** drafts emails, events, documents and workflow runs, and checks your schedule.
+  - **Coder** writes, explains and fixes code. With `PROJECT_DIR` set it reads your project folder and proposes changes to its files; with the code sandbox it proposes running Python to test it.
+  - While they work, a line under the reply says who is busy ("Coder is working: read a project file…"). Afterwards **Worked with …** opens the list of steps, tools and short reports, saved with the reply.
+  - Helpers only read and draft. Every email, event, document, workflow run, **code run** and **file change** they prepare shows up as a review card, and nothing happens until you approve it. A file change shows as a diff; you can edit the new text before approving. If the file changed since the draft, it isn't written and you're asked to try again.
+  - Approved code runs in the sandbox: Python's standard library only, no internet, none of your files, 10 seconds and 256 MB by default. The output appears on the card, and the coder can read it on your next message ("did it work?"). Python code blocks in replies get a **Run** button that makes the same kind of card, and the lightning menu has **Run Python code**.
+  - Helpers take longer than a plain reply, especially on small local models; models with tool support (`qwen2.5`, `llama3.1`, Claude) work best. `AGENT_MODE=always` uses them for every message instead (small talk skips them), including voice, where only the final answer is spoken. `AGENT_MODE=off` removes the button.
+  - Text from web pages, documents and files is treated as information, never as instructions. The worst a page that tries to trick the helpers can do is make a draft, which you see before anything happens.
 - **Notifications:** the bell in the header lists what happened, with an unread count, on every device that has the app open. New ones pop up live, and as a desktop notification when the tab is in the background. They also go to your phone (ntfy push or SMS, set up as above) for the categories you switch on in Settings → *Notifications*:
 
   | When | Browser | Phone (default) |
@@ -169,6 +182,7 @@ If the computer's address changes, run the script again and restart the frontend
   - *Push to talk:* hold the button, or hold **Space** when not typing.
   - *Hands-free:* just talk. A pause of about 0.8 s ends your turn.
   - *Wake word:* say "Hey Jarvis". A chime confirms. After the reply you have a follow-up window (8 s by default) to keep talking before it waits for the wake word again. *Talk now* skips the wake word.
+- **Model:** the chip button next to the mic in the message box shows the model in use. Click it to switch between your pulled Ollama models, Claude models (with an API key or with your subscription) and test mode in one click. Claude models stay greyed out until a key is added, right there in the menu; Claude with your subscription stays greyed out until the bridge is running (see *Using Claude instead of a local model*). If a model you pick turns out not to be ready, the assistant stays on the one it was using and tells you why. The choice applies to every chat and device until the chat service restarts; set `LLM_PROVIDER` / `LLM_MODEL` in `.env` to keep it.
 - **Settings** (in the drawer behind the person icon):
   - Model: provider, model, system prompt, temperature.
   - Language: the reply language and the translation language.
@@ -183,16 +197,23 @@ All settings are environment variables. Put them in `.env`; Docker and the nativ
 
 | Variable | Default | Notes |
 |---|---|---|
-| `LLM_PROVIDER` | `ollama` | `ollama`, `anthropic` (Claude) or `echo` (offline test mode) |
-| `LLM_MODEL` | *(provider default)* | Overrides `OLLAMA_MODEL` / `ANTHROPIC_MODEL` |
+| `LLM_PROVIDER` | `ollama` | `ollama`, `anthropic` (Claude with an API key), `claude_cli` (Claude with your subscription, through the bridge) or `echo` (offline test mode) |
+| `LLM_MODEL` | *(provider default)* | Overrides `OLLAMA_MODEL` / `ANTHROPIC_MODEL` / `CLAUDE_CLI_MODEL` |
 | `OLLAMA_MODEL` | `llama3.2` | Pulled automatically in Docker |
 | `OLLAMA_KEEP_ALIVE` | `24h` | How long the model stays loaded after a reply (`-1m` = never unload). The chat service also preloads the model at startup and when you switch models. |
 | `OLLAMA_NUM_THREAD` | `0` | CPU threads for generation (`0` = one per core). Set it below the number of free cores when other programs keep the CPU busy; oversubscribed threads can slow replies 10–30×. Ignored when the model runs on a GPU. |
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | Native runs only |
 | `OLLAMA_DOCKER_URL` | `http://ollama:11434` | Docker: point at a host Ollama via `http://host.docker.internal:11434` |
-| `ANTHROPIC_API_KEY` | — | Required for Claude |
+| `ANTHROPIC_API_KEY` | — | Required for Claude, unless you add the key from the model menu instead. Set here, it takes precedence |
 | `ANTHROPIC_MODEL` | `claude-opus-5-5` | |
 | `ANTHROPIC_EFFORT` | `low` | `low`…`max`; low keeps voice latency down |
+| `CLAUDE_CLI_MODEL` | `claude-sonnet-5-5` | Default model for Claude with your subscription |
+| `CLAUDE_BRIDGE_TOKEN` | — | Shared by the chat service and the bridge. `scripts/bridge.ps1` / `bridge.sh` create it the first time; the bridge refuses every request without it |
+| `CLAUDE_BRIDGE_URL` | `http://127.0.0.1:8005` | Native runs: where the chat service finds the bridge. Empty turns it off |
+| `CLAUDE_BRIDGE_DOCKER_URL` | `http://host.docker.internal:8005` | Docker: the bridge on this computer, as the chat container sees it. Empty turns it off |
+| `CLAUDE_CLI_PATH` | *(found automatically)* | Bridge only: the `claude` program. Otherwise it looks on `PATH`, in `~/.local/bin`, then in the VS Code extension |
+| `CLAUDE_BRIDGE_PARALLEL` | `2` | Bridge only: replies Claude Code writes at the same time |
+| `CLAUDE_BRIDGE_TIMEOUT_SECONDS` | `300` | Bridge only: longest wait for one reply |
 | `WEB_SEARCH` | `searxng` | `searxng` (the bundled container), `brave` ([Brave Search API](https://brave.com/search/api/), needs `BRAVE_API_KEY`) or `off` |
 | `BRAVE_API_KEY` | — | For `WEB_SEARCH=brave` |
 | `WEB_SEARCH_RESULTS` | `5` | Pages found per question (1–10), shown under the reply and given to the model |
@@ -215,6 +236,14 @@ All settings are environment variables. Put them in `.env`; Docker and the nativ
 | `NOTIFY_REMIND_MINUTES` | `30` | Remind once more if a task is still waiting; `0` = off |
 | `APP_URL` | — | Link added to phone notifications and shown in Settings, e.g. `https://192.168.1.10:8443`. Set by `scripts/lan.ps1` |
 | `WORKFLOWS` | `{}` | JSON `{"name": "webhook URL"}`. Approved runs POST `{"workflow", "input", "action_id"}` to that URL. Only listed URLs are ever called |
+| `AGENT_MODE` | `toggle` | `toggle` (Agents button in the message box), `always` (every message; small talk skips them) or `off` |
+| `AGENT_MAX_STEPS` | `4` | Helpers the lead assistant may call for one message (1–10) |
+| `AGENT_MAX_TOOL_CALLS` | `6` | Tool uses per helper (1–30); then it reports what it has |
+| `AGENT_TIMEOUT_SECONDS` | `180` | Time the helpers get before the reply is written from what they found |
+| `PROJECT_DIR` | — | A folder the coder may read and, after you approve each change, edit. Docker mounts it at `/workspace`. `.env` files, keys, `.git`, `node_modules` and similar stay hidden |
+| `SANDBOX_URL` | Docker: `http://sandbox:8004` | The code sandbox. Native runs: empty = no code runs (the sandbox needs Linux or macOS) |
+| `SANDBOX_TOKEN` | — | Any long random text; the chat service and the sandbox must share it |
+| `SANDBOX_TIMEOUT_SECONDS` / `SANDBOX_MEMORY_MB` / `SANDBOX_MAX_OUTPUT` | `10` / `256` / `65536` | Limits for one code run: seconds, memory, and bytes of output kept |
 | `STT_MODEL` | `base.en` | `tiny.en`, `small.en`, `medium.en`, or multilingual `base`, `small`, `large-v3`… |
 | `STT_LANGUAGE` | `en` | Empty = auto-detect (use a multilingual model) |
 | `STT_DEVICE` / `STT_COMPUTE_TYPE` | `cpu` / `int8` | Native: `cuda` / `float16` with CUDA 12 + cuDNN installed |
@@ -236,7 +265,36 @@ All settings are environment variables. Put them in `.env`; Docker and the nativ
 
 ### Using Claude instead of a local model
 
-Set `ANTHROPIC_API_KEY` in `.env` and either set `LLM_PROVIDER=anthropic` or switch provider in Settings at runtime. The provider uses the official `anthropic` SDK. It streams with adaptive thinking at the configured effort and has server-side refusal fallback enabled. Note that conversation text is then sent to the Anthropic API. Speech processing stays local.
+The quickest way: open the model menu next to the mic, paste your API key (from [console.anthropic.com](https://console.anthropic.com/settings/keys)) into the Claude section and press **Add**, then pick a Claude model. The key is checked with Anthropic first, kept in the chat service's database on this computer, and never shown again or sent to the browser. It can only be added or removed from this computer, not from a phone or tablet. Alternatively, set `ANTHROPIC_API_KEY` in `.env` (it wins over a key added in the app) and either set `LLM_PROVIDER=anthropic` or switch at runtime. The provider uses the official `anthropic` SDK. It streams with adaptive thinking at the configured effort and has server-side refusal fallback enabled. Note that conversation text is then sent to the Anthropic API. Speech processing stays local.
+
+#### With your Claude subscription (no API key)
+
+If you have a Claude Pro or Max plan, the assistant can use it through [Claude Code](https://claude.com/code) instead of an API key. Replies then count against your plan's usage limits, not API billing.
+
+1. Install Claude Code on this computer, run `claude` once in a terminal and sign in with your Claude account. The copy that comes with the VS Code extension works too.
+2. Start the bridge and leave it running: `scripts\bridge.ps1` (Windows) or `scripts/bridge.sh`. On Windows, `scripts\bridge.ps1 -Install` runs it hidden now and every time you sign in, so you don't have to think about it (`-Uninstall` undoes that; `-Background` runs it hidden just this once). The first time, it adds `CLAUDE_BRIDGE_TOKEN` to `.env`; if the assistant runs in Docker, then restart the chat service with `docker compose up -d chat`. For native runs, `scripts\dev.ps1` starts the bridge too.
+3. In the model menu next to the mic, pick a model under **Claude (your subscription)**. The chip then shows "· plan".
+
+The bridge runs on this computer, not in Docker, because that's where Claude Code is signed in. It listens on 127.0.0.1 only, and every request needs the token. Each reply is one `claude -p` run with no tools (it can't read files, run commands or browse), no MCP servers, hooks or plugins, in an empty temporary folder, with nothing saved. Any `ANTHROPIC_API_KEY` is removed from its environment, so it always uses your subscription. Agents work too: their tool choices come back as structured answers. Each reply starts Claude Code afresh, which adds a second or two. Your plan is for your own use, so don't let other people use the assistant through it. As with the API, conversation text goes to Anthropic.
+
+## Chat stream events
+
+`POST /api/sessions/{id}/messages/stream` answers with Server-Sent Events, each `event: <name>` plus one line of JSON `data`. The browser and the voice service read the same stream, and both ignore events they don't know.
+
+| Event | Data | When |
+|---|---|---|
+| `start` | `{user_message, provider, model}` | First |
+| `searching` | `{query}` | A web search starts (the globe, or the researcher) |
+| `web` | `{query, links, related, error?}` | Its results |
+| `plan` | `{steps: [{agent, title, task}]}` | Agents: the helpers chosen, in order |
+| `agent` | `{step, agent, title, task, status, summary}` | A helper starts (`running`) or ends (`done`, `failed`, `skipped`) |
+| `tool` | `{step, index, agent, tool, input, output, status, action_id?}` | A helper starts or finishes using a tool (short previews) |
+| `action` | `{action}` | A helper stored a draft for review |
+| `token` | `{text}` | A piece of the reply. Only the final answer is sent as tokens, so voice speaks nothing else |
+| `done` | `{message}` | The saved reply, with `web` and `agent` (the steps) |
+| `error` | `{message}` | Instead of `done` |
+
+Send `"agents": true` (and `"now": "YYYY-MM-DDTHH:MM"`, your local time) in the request to use the helpers. See [docs/agents.md](docs/agents.md) for how they work.
 
 ## WebSocket protocols
 
@@ -271,7 +329,7 @@ Client to server: PCM16 frames as above. Server to client:
 scripts\test.ps1        # or scripts/test.sh
 ```
 
-This runs the pytest suites for all three services and the frontend's vitest and type-check. The tests use fake engines and a mock LLM, so no models or network are needed.
+This runs the pytest suites for every service and the frontend's vitest and type-check. The tests use fake engines and a mock LLM, so no models or network are needed.
 
 Smoke tests against the real models:
 
@@ -288,12 +346,17 @@ python scripts/voice_client.py question.wav --url ws://localhost:8002/ws/voice -
 
 ```
 services/
-  chat/      app/{main,routes,chat_service,repository,schemas,config}.py, app/llm/{ollama,anthropic_provider,echo}.py
+  chat/      app/{main,routes,chat_service,repository,schemas,config,automation,workspace}.py, app/llm/{ollama,anthropic_provider,claude_cli,echo}.py
+             app/agents/{orchestrator,specialists,tools,prompts}.py (lead assistant, helpers, their tools)
   voice/     app/{main,pipeline,vad,sentences,engines,chat_client,config}.py, scripts/smoke_test.py
   wakeword/  app/{main,detector,config}.py, scripts/smoke_test.py
-frontend/    src/{App.tsx, components/, hooks/, audio/ (mic, player, recorder, pcm, voiceController), lib/ (api, sse, types)}
+  sandbox/   app/{main,runner,config}.py (runs approved Python with limits)
+  bridge/    app/{main,cli,config}.py (Claude with your subscription: runs Claude Code on this computer)
+frontend/    src/{App.tsx, components/, hooks/, audio/ (mic, player, recorder, pcm, voiceController), lib/ (api, sse, types, agentTrace)}
              nginx.conf + assistant.conf (local and HTTPS ports), certs.sh (HTTPS certificate), public/ (icons, manifest, sw.js)
-scripts/     setup/dev/test for Windows and Unix, lan (phones and tablets), voice_client.py
+scripts/     setup/dev/test for Windows and Unix, lan (phones and tablets), bridge (Claude subscription), voice_client.py
+docs/        agents.md (how the agents work, and how to add a tool or helper)
+workspace/   the default (empty) project folder for the coder
 docker-compose.yml, docker-compose.gpu.yml, .env.example
 ```
 
@@ -313,6 +376,16 @@ docker-compose.yml, docker-compose.gpu.yml, .env.example
 | Hands-free cuts you off / waits too long | Adjust `VAD_SILENCE_MS`. In a noisy room, try push-to-talk. |
 | "Web search didn't work" | `docker compose ps searxng` should say *running*; check `docker compose logs searxng`. If the engines it uses block it for a while, results come back empty: try again later, or switch to `WEB_SEARCH=brave`. |
 | Search results are off-topic for follow-ups | The message is searched as typed, so "what about the price?" lacks the topic. Name it ("what does the Pixel 10 cost?"), or turn the globe off for that question. |
+| Agents take a long time | Each helper is a few extra model calls. Use a model with tool support (`ollama pull qwen2.5:7b`), lower `AGENT_MAX_TOOL_CALLS`, or turn Agents off for simple questions. Models without tool support still work, more slowly, by picking tools as JSON. |
+| No Agents button | `AGENT_MODE` is `off` or `always` in `.env`. |
+| "Code can't be run here" | The sandbox isn't set up: in Docker check `docker compose ps sandbox`; natively there is none (it needs Linux or macOS). |
+| The coder can't see my project | Set `PROJECT_DIR` in `.env` and restart the chat service (Docker: `docker compose up -d chat`). Hidden files such as `.env` and folders like `node_modules` are skipped on purpose. |
+| "The file changed since this edit was drafted" | The file was edited after the helper read it. Ask again so it works from the current version. |
+| "The Claude bridge isn't running" | Start `scripts\bridge.ps1` (or `bridge.sh`) and keep it open, or run `scripts\bridge.ps1 -Install` once so it starts with Windows. Then open the model menu again. |
+| "Claude Code isn't signed in" | Run `claude` in a terminal on this computer and sign in with your Claude account. |
+| "CLAUDE_BRIDGE_TOKEN doesn't match" | The chat service started before the token was created. Docker: `docker compose up -d chat`; natively, restart `scripts\dev.ps1`. |
+| "You've reached your Claude plan's usage limit" | Wait until the time it gives, or switch to Ollama or Claude with an API key in the model menu. |
+| Bridge works natively but not from Docker on Linux | The container reaches the computer through the Docker network, not 127.0.0.1: start it with `CLAUDE_BRIDGE_HOST=0.0.0.0 scripts/bridge.sh`. |
 | Too many or too few wake-ups | Adjust the sensitivity in Settings (threshold 0.3–0.7). |
 | No speech heard | Check "Speak replies". Some browsers need one click on the page before audio can play. |
 

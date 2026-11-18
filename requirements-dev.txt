@@ -2,3 +2,5 @@
 -r services/chat/requirements-dev.txt
 -r services/voice/requirements.txt
 -r services/wakeword/requirements.txt
+-r services/sandbox/requirements.txt
+-r services/bridge/requirements.txt

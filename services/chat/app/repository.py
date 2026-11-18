@@ -12,6 +12,7 @@ import aiosqlite
 from .llm.base import ImageData
 from .schemas import (
     ActionOut,
+    AgentTrace,
     EventOut,
     FileOut,
     FileRef,
@@ -149,7 +150,8 @@ class Repository:
         await self._db.execute("PRAGMA journal_mode = WAL")
         await self._db.executescript(SCHEMA)
         await self._add_missing_columns("actions", {"reminded_at": "TEXT"})
-        await self._add_missing_columns("messages", {"web": "TEXT"})  # WebResults as JSON
+        # WebResults / AgentTrace as JSON
+        await self._add_missing_columns("messages", {"web": "TEXT", "agent": "TEXT"})
         # An action that was running when the service stopped goes back for review.
         await self._db.execute(
             "UPDATE actions SET status = 'pending', error = ? WHERE status = 'running'",
@@ -242,15 +244,21 @@ class Repository:
         images: Sequence[ImageData] = (),
         files: Sequence[FileRef] = (),
         web: WebResults | None = None,
+        agent: AgentTrace | None = None,
     ) -> MessageOut:
         """Store a message. `files` were uploaded with add_file and are attached to it here.
-        `web`: what a web search found for the question this message answers."""
+        `web`: what a web search found for the question this message answers.
+        `agent`: how the helpers worked on this reply."""
         now = _now()
         mid = _new_id()
         await self.db.execute(
-            "INSERT INTO messages (id, session_id, role, content, source, created_at, web) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (mid, session_id, role, content, source, now, web.model_dump_json() if web else None),
+            "INSERT INTO messages (id, session_id, role, content, source, created_at, web, agent) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                mid, session_id, role, content, source, now,
+                web.model_dump_json() if web else None,
+                agent.model_dump_json() if agent else None,
+            ),
         )
         refs = [ImageRef(id=_new_id(), media_type=img.media_type) for img in images]
         await self.db.executemany(
@@ -280,6 +288,7 @@ class Repository:
             images=refs,
             files=list(files),
             web=web,
+            agent=agent,
         )
 
     async def list_messages(self, session_id: str, limit: int | None = None) -> list[MessageOut]:
@@ -321,7 +330,7 @@ class Repository:
                 )
         return [
             MessageOut(
-                **{**dict(row), "web": _web(row["web"])},
+                **{**dict(row), "web": _web(row["web"]), "agent": _agent(row["agent"])},
                 images=refs.get(row["id"], []),
                 files=files.get(row["id"], []),
             )
@@ -633,6 +642,15 @@ def _web(value: str | None) -> WebResults | None:
         return None
     try:
         return WebResults.model_validate_json(value)
+    except ValueError:
+        return None
+
+
+def _agent(value: str | None) -> AgentTrace | None:
+    if not value:
+        return None
+    try:
+        return AgentTrace.model_validate_json(value)
     except ValueError:
         return None
 

@@ -169,3 +169,28 @@ export const ExternalIcon = (p: SVGProps<SVGSVGElement>) => (
     <path d="M15 3h6v6M10 14 21 3M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
   </svg>
 );
+/** Agents: a small team. */
+export const TeamIcon = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}>
+    <circle cx="9" cy="8" r="3" />
+    <circle cx="17" cy="9" r="2.5" />
+    <path d="M3 20a6 6 0 0 1 12 0M14.5 14.5A5 5 0 0 1 21 19" />
+  </svg>
+);
+export const CodeIcon = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}>
+    <path d="m8 7-5 5 5 5M16 7l5 5-5 5M14 4l-4 16" />
+  </svg>
+);
+export const PlayIcon = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}>
+    <path d="M7 4.5v15l12-7.5z" fill="currentColor" />
+  </svg>
+);
+/** The language model: a chip. */
+export const ChipIcon = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}>
+    <rect x="6" y="6" width="12" height="12" rx="2" />
+    <path d="M10 10h4v4h-4zM9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4" />
+  </svg>
+);

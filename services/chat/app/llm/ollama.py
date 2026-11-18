@@ -7,11 +7,16 @@ import httpx
 
 from .base import (
     TRUNCATED_NOTE,
+    AgentStep,
+    AgentTurn,
     ChatTurn,
     GenerationParams,
     LLMError,
     LLMProvider,
+    ToolCall,
+    ToolSpec,
     last_user_images,
+    new_call_id,
     parse_json_object,
 )
 
@@ -37,7 +42,7 @@ class OllamaProvider(LLMProvider):
         self.num_thread = num_thread
         self.max_ctx = max_ctx
         self._base_url = base_url.rstrip("/")
-        self._vision: dict[str, bool] = {}
+        self._capabilities: dict[str, list[str]] = {}
         self._client = client or httpx.AsyncClient(
             timeout=httpx.Timeout(connect=5.0, read=300.0, write=30.0, pool=5.0)
         )
@@ -102,11 +107,35 @@ class OllamaProvider(LLMProvider):
         # Ollama constrains generation to the schema, so even small models return valid JSON.
         messages = [{"role": "system", "content": params.system}] if params.system else []
         messages += [{"role": t.role, "content": t.content} for t in turns]
-        body = {
+        data = await self._chat_once(self._body(params, messages, format=schema), "drafting")
+        return parse_json_object(data.get("message", {}).get("content", ""))
+
+    async def run_tools_step(
+        self, turns: list[AgentTurn], params: GenerationParams, tools: list[ToolSpec]
+    ) -> AgentStep:
+        if "tools" not in await self._model_capabilities(params.model):
+            return await super().run_tools_step(turns, params, tools)  # JSON fallback
+        messages = [{"role": "system", "content": params.system}] if params.system else []
+        messages += [_agent_message(t) for t in turns]
+        body = self._body(params, messages, tools=[_tool_def(t) for t in tools])
+        data = await self._chat_once(body, "working on the request")
+        message = data.get("message", {})
+        calls = tuple(
+            ToolCall(new_call_id(), fn.get("name", ""), _arguments(fn.get("arguments")))
+            for fn in (c.get("function", {}) for c in message.get("tool_calls") or [])
+            if fn.get("name")
+        )
+        return AgentStep(
+            message.get("content", "").strip(),
+            calls,
+            truncated=data.get("done_reason") == "length",
+        )
+
+    def _body(self, params: GenerationParams, messages: list[dict], **extra) -> dict:
+        return {
             "model": params.model,
             "messages": messages,
             "stream": False,
-            "format": schema,
             "keep_alive": self.keep_alive,
             "options": {
                 **self._load_options(),
@@ -114,20 +143,27 @@ class OllamaProvider(LLMProvider):
                 "temperature": params.temperature,
                 "num_predict": params.max_tokens,
             },
+            **extra,
         }
+
+    async def _chat_once(self, body: dict, doing: str) -> dict:
+        """A non-streaming /api/chat request, with errors turned into LLMError."""
         try:
             resp = await self._client.post(f"{self._base_url}/api/chat", json=body)
         except httpx.ConnectError as exc:
             raise LLMError(f"Cannot reach Ollama at {self._base_url}. Is it running? ({exc})") from exc
         except httpx.TimeoutException as exc:
-            raise LLMError("Ollama timed out while drafting.") from exc
+            raise LLMError(f"Ollama timed out while {doing}.") from exc
         if resp.status_code == 404:
             raise LLMError(
-                f"Ollama model '{params.model}' is not available. Run: ollama pull {params.model}"
+                f"Ollama model '{body['model']}' is not available. Run: ollama pull {body['model']}"
             )
         if resp.status_code >= 400:
             raise LLMError(f"Ollama error {resp.status_code}: {resp.text[:300]}")
-        return parse_json_object(resp.json().get("message", {}).get("content", ""))
+        data = resp.json()
+        if "error" in data:
+            raise LLMError(f"Ollama error: {data['error']}")
+        return data
 
     async def list_models(self) -> list[str]:
         resp = await self._client.get(f"{self._base_url}/api/tags", timeout=5.0)
@@ -145,16 +181,20 @@ class OllamaProvider(LLMProvider):
         return False, f"model '{model}' not pulled (run: ollama pull {model})"
 
     async def _supports_vision(self, model: str) -> bool:
-        if model not in self._vision:
+        return "vision" in await self._model_capabilities(model)
+
+    async def _model_capabilities(self, model: str) -> list[str]:
+        """What the model can do ("vision", "tools", ...), as Ollama reports it."""
+        if model not in self._capabilities:
             try:
                 resp = await self._client.post(
                     f"{self._base_url}/api/show", json={"model": model}, timeout=10.0
                 )
                 resp.raise_for_status()
             except httpx.HTTPError:
-                return False  # not cached: the chat request reports the real problem
-            self._vision[model] = "vision" in resp.json().get("capabilities", [])
-        return self._vision[model]
+                return []  # not cached: the chat request reports the real problem
+            self._capabilities[model] = list(resp.json().get("capabilities", []))
+        return self._capabilities[model]
 
     async def warm_up(self, model: str) -> None:
         # A generate request without a prompt only loads the model.
@@ -187,3 +227,31 @@ class OllamaProvider(LLMProvider):
 
     async def aclose(self) -> None:
         await self._client.aclose()
+
+
+def _tool_def(tool: ToolSpec) -> dict:
+    return {
+        "type": "function",
+        "function": {"name": tool.name, "description": tool.description, "parameters": tool.parameters},
+    }
+
+
+def _agent_message(turn: AgentTurn) -> dict:
+    if turn.role == "tool":
+        return {"role": "tool", "content": turn.content, "tool_name": turn.tool_name}
+    message: dict = {"role": turn.role, "content": turn.content}
+    if turn.tool_calls:
+        message["tool_calls"] = [
+            {"function": {"name": c.name, "arguments": c.arguments}} for c in turn.tool_calls
+        ]
+    return message
+
+
+def _arguments(value) -> dict:
+    """Tool arguments arrive as an object, or from some models as a JSON string."""
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            return {}
+    return value if isinstance(value, dict) else {}

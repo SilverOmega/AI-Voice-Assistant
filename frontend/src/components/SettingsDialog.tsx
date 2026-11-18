@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, auth as authApi } from "../lib/api";
+import { announceConfig } from "../lib/models";
 import type { LanguagePrefs } from "../hooks/useLanguage";
 import { PETS, type PetKind } from "../hooks/usePet";
 import type { AuthStatus, AutomationInfo, ChannelPrefs, ChatConfig, NotificationSettings, ProviderName, VoicePrefs } from "../lib/types";
@@ -21,7 +22,8 @@ interface Props {
 
 const PROVIDER_LABELS: Record<ProviderName, string> = {
   ollama: "Ollama (local)",
-  anthropic: "Claude (Anthropic API)",
+  anthropic: "Claude (Anthropic API key)",
+  claude_cli: "Claude (your subscription, via Claude Code)",
   echo: "Echo (offline test)",
 };
 
@@ -122,6 +124,7 @@ export function SettingsDialog({
         temperature: draft.temperature,
       });
       setConfig(updated);
+      announceConfig(updated);
       setDraft((d) => ({ ...d, model: updated.model }));
       setStatus(`Saved. ${updated.provider_status[updated.provider] ?? ""}`);
       api.listModels().then((m) => setModels(m.models)).catch(() => setModels([]));
@@ -160,7 +163,7 @@ export function SettingsDialog({
                 value={draft.provider}
                 onChange={(e) => setDraft({ ...draft, provider: e.target.value as ProviderName })}
               >
-                {(config?.available_providers ?? ["ollama", "anthropic", "echo"]).map((p) => (
+                {(config?.available_providers ?? ["ollama", "anthropic", "claude_cli", "echo"]).map((p) => (
                   <option key={p} value={p}>
                     {PROVIDER_LABELS[p]}
                   </option>
@@ -195,7 +198,7 @@ export function SettingsDialog({
                 onChange={(e) => setDraft({ ...draft, system_prompt: e.target.value })}
               />
             </label>
-            {draft.provider !== "anthropic" && (
+            {draft.provider !== "anthropic" && draft.provider !== "claude_cli" && (
               <label className="block text-sm">
                 Temperature: {draft.temperature.toFixed(1)}
                 <input

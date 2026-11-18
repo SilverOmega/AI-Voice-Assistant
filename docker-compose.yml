@@ -42,6 +42,10 @@ services:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-opus-5-5}
       ANTHROPIC_EFFORT: ${ANTHROPIC_EFFORT:-low}
+      # Claude with your subscription: the bridge runs on this computer (scripts/bridge.ps1).
+      CLAUDE_BRIDGE_URL: ${CLAUDE_BRIDGE_DOCKER_URL-http://host.docker.internal:8005}
+      CLAUDE_BRIDGE_TOKEN: ${CLAUDE_BRIDGE_TOKEN:-}
+      CLAUDE_CLI_MODEL: ${CLAUDE_CLI_MODEL:-claude-sonnet-5-5}
       MAX_HISTORY_MESSAGES: ${MAX_HISTORY_MESSAGES:-30}
       DOCUMENT_MAX_CHARS: ${DOCUMENT_MAX_CHARS:-40000}
       OLLAMA_MAX_CTX: ${OLLAMA_MAX_CTX:-16384}
@@ -72,13 +76,54 @@ services:
       SEARXNG_URL: http://searxng:8080
       BRAVE_API_KEY: ${BRAVE_API_KEY:-}
       WEB_SEARCH_RESULTS: ${WEB_SEARCH_RESULTS:-5}
+      AGENT_MODE: ${AGENT_MODE:-toggle}
+      AGENT_MAX_STEPS: ${AGENT_MAX_STEPS:-4}
+      AGENT_MAX_TOOL_CALLS: ${AGENT_MAX_TOOL_CALLS:-6}
+      AGENT_TIMEOUT_SECONDS: ${AGENT_TIMEOUT_SECONDS:-180}
+      # The project folder from .env is mounted at /workspace; empty = no project folder.
+      PROJECT_DIR: ${PROJECT_DIR:+/workspace}
+      SANDBOX_URL: ${SANDBOX_URL-http://sandbox:8004}
+      SANDBOX_TOKEN: ${SANDBOX_TOKEN:-}
     volumes:
       - chat-data:/data
+      # The code helper reads this folder, and changes files in it only after you approve.
+      - ${PROJECT_DIR:-./workspace}:/workspace
     ports:
       - "127.0.0.1:8001:8001"
+    extra_hosts:
+      # Docker Desktop has this already; on Linux it points at the computer itself.
+      - "host.docker.internal:host-gateway"
+    networks:
+      - default
+      - sandbox
     depends_on:
       - ollama
       - searxng
+      - sandbox
+    restart: unless-stopped
+
+  # Runs Python the code helper wrote, after you approve each run. It sits on a network with
+  # no way out (no internet, no other services but chat), has no port on this computer, a
+  # read-only filesystem, no Linux capabilities, and memory, CPU and process limits.
+  sandbox:
+    build: ./services/sandbox
+    environment:
+      SANDBOX_TOKEN: ${SANDBOX_TOKEN:-}
+      SANDBOX_TIMEOUT_SECONDS: ${SANDBOX_TIMEOUT_SECONDS:-10}
+      SANDBOX_MEMORY_MB: ${SANDBOX_MEMORY_MB:-256}
+      SANDBOX_MAX_OUTPUT: ${SANDBOX_MAX_OUTPUT:-65536}
+    networks:
+      - sandbox
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    mem_limit: 512m
+    cpus: 1.0
     restart: unless-stopped
 
   # Web search for the chat service: links and related topics under replies. Only the chat
@@ -143,6 +188,12 @@ services:
       - voice
       - wakeword
     restart: unless-stopped
+
+networks:
+  default:
+  # Internal: the code sandbox can talk to the chat service and nothing else.
+  sandbox:
+    internal: true
 
 volumes:
   ollama:
