@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { KIND_LABELS } from "./components/ActionCard";
 import { Composer } from "./components/Composer";
-import { EraserIcon, PopOutIcon, SparkleIcon, UserIcon, WaveIcon, XIcon } from "./components/icons";
+import { ChartIcon, EraserIcon, PopOutIcon, SparkleIcon, UserIcon, WaveIcon, XIcon } from "./components/icons";
 import { MessageList } from "./components/MessageList";
 import { NotificationBell } from "./components/NotificationBell";
+import { RatesDashboard } from "./components/RatesDashboard";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { Sidebar } from "./components/Sidebar";
 import { Pet } from "./components/Pet";
@@ -125,6 +126,7 @@ export default function App({ auth, onSignedOut }: Props) {
   );
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [ratesOpen, setRatesOpen] = useState(false);
   const [pet, setPet] = usePet();
   const [voicePanel, setVoicePanel] = useState(() => {
     try {
@@ -262,6 +264,14 @@ export default function App({ auth, onSignedOut }: Props) {
               {title}
             </h2>
             <div className="ml-auto flex shrink-0 items-center gap-1">
+              <button
+                className={iconButton}
+                onClick={() => setRatesOpen(true)}
+                aria-label="Exchange rates and gold prices"
+                title="Exchange rates and gold prices"
+              >
+                <ChartIcon />
+              </button>
               <NotificationBell
                 items={notifications.items}
                 unread={notifications.unread}
@@ -392,6 +402,8 @@ export default function App({ auth, onSignedOut }: Props) {
       </div>
 
       <Toasts toasts={toasts} onDismiss={dismissToast} />
+
+      <RatesDashboard open={ratesOpen} onClose={() => setRatesOpen(false)} />
 
       <SettingsDialog
         open={settingsOpen}
