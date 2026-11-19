@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { KIND_LABELS } from "./components/ActionCard";
 import { Composer } from "./components/Composer";
-import { EraserIcon, PopOutIcon, SparkleIcon, UserIcon, WaveIcon, XIcon } from "./components/icons";
+import { ChartIcon, EraserIcon, PopOutIcon, SparkleIcon, UserIcon, WaveIcon, XIcon } from "./components/icons";
 import { MessageList } from "./components/MessageList";
 import { NotificationBell } from "./components/NotificationBell";
+import { RatesDashboard } from "./components/RatesDashboard";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { Sidebar } from "./components/Sidebar";
 import { Pet } from "./components/Pet";
@@ -28,7 +29,8 @@ const TOAST_SECONDS = { info: 8, warning: 12, error: 20 };
 
 /** The compact window opened by the pop-out button. The name survives reloads of that window. */
 const POPOUT_NAME = "assistant-popout";
-const VOICE_PANEL_KEY = "assistant.voicePanel";
+/** The voice bar is hidden until the wave button turns it on. */
+const VOICE_PANEL_KEY = "assistant.voiceBar";
 
 function popOut(sessionId: string | null) {
   const url = sessionId ? `/?chat=${encodeURIComponent(sessionId)}` : "/";
@@ -125,12 +127,13 @@ export default function App({ auth, onSignedOut }: Props) {
   );
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [ratesOpen, setRatesOpen] = useState(false);
   const [pet, setPet] = usePet();
   const [voicePanel, setVoicePanel] = useState(() => {
     try {
-      return localStorage.getItem(VOICE_PANEL_KEY) !== "off";
+      return localStorage.getItem(VOICE_PANEL_KEY) === "on";
     } catch {
-      return true;
+      return false;
     }
   });
   const toggleVoicePanel = () => {
@@ -211,14 +214,9 @@ export default function App({ auth, onSignedOut }: Props) {
   };
 
   return (
-    <div
-      className={`safe-x flex h-full items-center justify-center ${
-        compact
-          ? ""
-          : "md:bg-gradient-to-br md:from-slate-50 md:via-white md:to-sky-50 md:p-6 dark:md:from-slate-950 dark:md:via-slate-950 dark:md:to-slate-900"
-      }`}
-    >
+    <div className="safe-x flex h-full">
       <Sidebar
+        docked={!compact}
         sessions={chat.sessions}
         activeId={chat.activeId}
         health={health}
@@ -227,14 +225,17 @@ export default function App({ auth, onSignedOut }: Props) {
         onSelect={(id) => {
           chat.selectSession(id);
           setSidebarOpen(false);
+          setSettingsOpen(false);
         }}
         onNew={() => {
           chat.newSession();
           setSidebarOpen(false);
+          setSettingsOpen(false);
         }}
         onPlan={(plan) => {
           chat.startPlan(plan);
           setSidebarOpen(false);
+          setSettingsOpen(false);
         }}
         busy={chat.streaming || chat.drafting}
         needsReview={needsReview}
@@ -248,20 +249,22 @@ export default function App({ auth, onSignedOut }: Props) {
         }}
       />
 
-      <div className={`relative flex h-full w-full ${compact ? "" : "md:h-[min(56rem,100%)] md:max-w-xl"}`}>
-        <main
-          className={`flex min-w-0 flex-1 flex-col overflow-hidden bg-white dark:bg-slate-900 ${
-            compact
-              ? ""
-              : "md:rounded-[1.75rem] md:shadow-[0_24px_70px_-20px_rgba(15,23,42,0.35)] md:ring-1 md:ring-slate-900/5 dark:md:ring-white/10"
-          }`}
-        >
+      <div className="relative flex h-full min-w-0 flex-1">
+        <main className="flex min-w-0 flex-1 flex-col overflow-hidden bg-white dark:bg-slate-900">
           <header className="safe-top flex items-center gap-2 px-4 pb-2">
             <SparkleIcon width={18} height={18} className="shrink-0 text-sky-400" />
             <h2 className="min-w-0 truncate font-semibold" title={health.chat?.detail.split(" — ")[0]}>
               {title}
             </h2>
             <div className="ml-auto flex shrink-0 items-center gap-1">
+              <button
+                className={iconButton}
+                onClick={() => setRatesOpen(true)}
+                aria-label="Exchange rates and gold prices"
+                title="Exchange rates and gold prices"
+              >
+                <ChartIcon />
+              </button>
               <NotificationBell
                 items={notifications.items}
                 unread={notifications.unread}
@@ -270,7 +273,7 @@ export default function App({ auth, onSignedOut }: Props) {
                 onOpenChat={chat.selectSession}
               />
               <button
-                className={iconButton}
+                className={`${iconButton} ${compact ? "" : "md:hidden"}`}
                 onClick={() => setSidebarOpen(true)}
                 aria-label="Conversations and settings"
                 title="Conversations and settings"
@@ -346,7 +349,7 @@ export default function App({ auth, onSignedOut }: Props) {
           </div>
 
           {pet !== "none" && (
-            <div className={`flex justify-center pb-1 ${compact ? "" : "lg:hidden"}`}>
+            <div className="flex justify-center pb-1">
               <Pet key={pet} kind={pet} asleep={asleep} className="w-24" />
             </div>
           )}
@@ -385,13 +388,11 @@ export default function App({ auth, onSignedOut }: Props) {
             }
           />
         </main>
-
-        {pet !== "none" && !compact && (
-          <Pet key={pet} kind={pet} asleep={asleep} className="absolute left-full top-[45%] ml-14 hidden w-44 lg:block" />
-        )}
       </div>
 
       <Toasts toasts={toasts} onDismiss={dismissToast} />
+
+      <RatesDashboard open={ratesOpen} onClose={() => setRatesOpen(false)} />
 
       <SettingsDialog
         open={settingsOpen}
@@ -404,6 +405,7 @@ export default function App({ auth, onSignedOut }: Props) {
         onPet={setPet}
         language={language}
         onLanguage={updateLanguage}
+        docked={!compact}
       />
     </div>
   );

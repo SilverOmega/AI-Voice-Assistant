@@ -1,5 +1,42 @@
 import { describe, expect, it } from "vitest";
-import { formatMillions, formatUpdated, formatUsd, formatVnd } from "./rates";
+import { convert, formatMillions, formatPercent, formatUpdated, formatUsd, formatVnd, spread } from "./rates";
+import type { CurrencyRate } from "./types";
+
+const USD: CurrencyRate = { code: "USD", name: "US DOLLAR", buy: 25530, transfer: 25560, sell: 25940 };
+
+describe("converter", () => {
+  it("uses the bank's buy rate when you sell foreign money", () => {
+    expect(convert(100, USD, "toVnd")).toEqual({ value: 2_553_000, used: "buy", rate: 25530 });
+  });
+
+  it("falls back to the transfer rate when the bank doesn't buy cash", () => {
+    expect(convert(10, { ...USD, buy: null }, "toVnd")).toEqual({ value: 255_600, used: "transfer", rate: 25560 });
+  });
+
+  it("uses the sell rate when you buy foreign money", () => {
+    expect(convert(2_594_000, USD, "fromVnd")).toEqual({ value: 100, used: "sell", rate: 25940 });
+  });
+
+  it("gives up on missing rates and unusable amounts", () => {
+    expect(convert(10, { ...USD, buy: null, transfer: null }, "toVnd")).toBeNull();
+    expect(convert(10, { ...USD, sell: null }, "fromVnd")).toBeNull();
+    expect(convert(-1, USD, "toVnd")).toBeNull();
+    expect(convert(Number.NaN, USD, "fromVnd")).toBeNull();
+  });
+});
+
+describe("spread", () => {
+  it("is sell minus buy, and that as a share of buy", () => {
+    const s = spread(25530, 25940);
+    expect(s?.amount).toBe(410);
+    expect(formatPercent(s!.percent)).toBe("1,61%");
+  });
+
+  it("needs both sides", () => {
+    expect(spread(null, 25940)).toBeNull();
+    expect(spread(25530, null)).toBeNull();
+  });
+});
 
 describe("rate formats", () => {
   it("writes đồng with dots between thousands", () => {

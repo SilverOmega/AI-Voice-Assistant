@@ -1,4 +1,6 @@
-/** Number formats for the Rates panel, the way they're written in Vietnam: 25.940 and 136,2. */
+/** Number formats and sums for the Rates dashboard, written the Vietnamese way: 25.940 and 136,2. */
+
+import type { CurrencyRate } from "./types";
 
 function group(int: string): string {
   return int.replace(/\B(?=(\d{3})+(?!\d))/g, ".");
@@ -23,6 +25,41 @@ export function formatMillions(n: number | null): string {
 export function formatUsd(n: number): string {
   const [int, frac] = n.toFixed(2).split(".");
   return `${group(int)},${frac}`;
+}
+
+/** Sell minus buy, and that as a share of the buy price; null when either side is missing. */
+export function spread(buy: number | null, sell: number | null): { amount: number; percent: number } | null {
+  if (buy === null || sell === null || !Number.isFinite(buy) || !Number.isFinite(sell) || buy <= 0) return null;
+  const amount = sell - buy;
+  return { amount, percent: (amount / buy) * 100 };
+}
+
+/** 1.234 -> "1,23%". */
+export function formatPercent(n: number): string {
+  return `${n.toFixed(2).replace(".", ",")}%`;
+}
+
+export type ConvertDirection = "toVnd" | "fromVnd";
+
+/**
+ * What an amount comes to at the bank. Selling foreign money for đồng uses the bank's buy rate
+ * (cash, or transfer when it doesn't buy that currency in cash); buying it with đồng uses the
+ * sell rate. null when the rate is missing or the amount isn't a usable number.
+ */
+export function convert(
+  amount: number,
+  rate: CurrencyRate,
+  direction: ConvertDirection,
+): { value: number; used: "buy" | "transfer" | "sell"; rate: number } | null {
+  if (!Number.isFinite(amount) || amount < 0) return null;
+  if (direction === "toVnd") {
+    if (rate.buy !== null && rate.buy > 0) return { value: amount * rate.buy, used: "buy", rate: rate.buy };
+    if (rate.transfer !== null && rate.transfer > 0)
+      return { value: amount * rate.transfer, used: "transfer", rate: rate.transfer };
+    return null;
+  }
+  if (rate.sell === null || rate.sell <= 0) return null;
+  return { value: amount / rate.sell, used: "sell", rate: rate.sell };
 }
 
 /** When a source last changed its prices: "13:37" today, "18/11 13:37" on another day. */

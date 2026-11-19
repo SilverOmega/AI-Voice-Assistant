@@ -4,7 +4,6 @@ import { api } from "../lib/api";
 import { formatWhen } from "../lib/notify";
 import { PLAN_TEMPLATES, type PlanTemplate } from "../lib/plans";
 import type { CalendarEvent, Session } from "../lib/types";
-import { Rates } from "./Rates";
 import { ChevronDownIcon, DownloadIcon, GearIcon, PencilIcon, PlusIcon, TrashIcon, XIcon } from "./icons";
 
 interface Props {
@@ -25,21 +24,27 @@ interface Props {
   onRename: (id: string, title: string) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
   onSettings: () => void;
+  /** On wide screens the sidebar stays on the left instead of being a drawer. */
+  docked: boolean;
 }
 
 export function Sidebar(props: Props) {
-  const { sessions, activeId, health, open } = props;
+  const { sessions, activeId, health, open, docked } = props;
   return (
     <>
-      {open && <div className="fixed inset-0 z-20 bg-black/40" onClick={props.onClose} />}
+      {open && <div className={`fixed inset-0 z-20 bg-black/40 ${docked ? "md:hidden" : ""}`} onClick={props.onClose} />}
       <aside
         className={`fixed inset-y-0 left-0 z-30 flex w-72 max-w-[85vw] flex-col border-r pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] border-slate-200 bg-slate-50 shadow-xl transition-[translate,visibility] dark:border-slate-800 dark:bg-slate-900 ${
           open ? "translate-x-0" : "invisible -translate-x-full"
-        }`}
+        } ${docked ? "md:visible md:static md:z-auto md:max-w-none md:shrink-0 md:translate-x-0 md:shadow-none" : ""}`}
       >
         <div className="flex items-center justify-between px-4 py-4">
           <h1 className="text-base font-semibold tracking-tight">Local Assistant</h1>
-          <button className="-mr-1 rounded p-2" onClick={props.onClose} aria-label="Close sidebar">
+          <button
+            className={`-mr-1 rounded p-2 ${docked ? "md:hidden" : ""}`}
+            onClick={props.onClose}
+            aria-label="Close sidebar"
+          >
             <XIcon />
           </button>
         </div>
@@ -69,7 +74,6 @@ export function Sidebar(props: Props) {
           ))}
         </nav>
         {props.events.length > 0 && <Upcoming events={props.events} onDelete={props.onDeleteEvent} />}
-        <Rates visible={open} />
         <div className="border-t border-slate-200 p-3 dark:border-slate-800">
           <div className="mb-2 space-y-1">
             <StatusDot label="Chat" status={health.chat} />

@@ -216,7 +216,7 @@ export function Composer({
     "flex w-full items-start gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm hover:bg-slate-100 disabled:opacity-40 disabled:hover:bg-transparent dark:hover:bg-slate-700";
 
   return (
-    <div className="safe-bottom w-full px-3">
+    <div className="safe-bottom mx-auto w-full max-w-3xl px-3">
       <div
         onDragOver={(e) => {
           if (!e.dataTransfer.types.includes("Files")) return;
