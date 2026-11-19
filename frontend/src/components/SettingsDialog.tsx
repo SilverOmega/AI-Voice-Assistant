@@ -18,6 +18,8 @@ interface Props {
   onPet: (pet: PetKind) => void;
   language: LanguagePrefs;
   onLanguage: (changes: Partial<LanguagePrefs>) => void;
+  /** The sidebar is docked on wide screens: open next to it instead of on the right. */
+  docked: boolean;
 }
 
 const PROVIDER_LABELS: Record<ProviderName, string> = {
@@ -38,6 +40,7 @@ export function SettingsDialog({
   onPet,
   language,
   onLanguage,
+  docked,
 }: Props) {
   const [config, setConfig] = useState<ChatConfig | null>(null);
   const [draft, setDraft] = useState({ provider: "ollama" as ProviderName, model: "", system_prompt: "", temperature: 0.7 });
@@ -138,12 +141,17 @@ export function SettingsDialog({
   const field = "mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800";
 
   return (
-    <div className="fixed inset-0 z-40 flex justify-end bg-black/40" onClick={onClose}>
+    <div
+      className={`fixed inset-0 z-40 flex justify-end bg-black/40 ${docked ? "md:left-72 md:justify-start" : ""}`}
+      onClick={onClose}
+    >
       <div
         role="dialog"
         aria-modal="true"
         aria-label="Settings"
-        className="flex h-full w-full max-w-md flex-col bg-white shadow-xl dark:bg-slate-900"
+        className={`flex h-full w-full max-w-md flex-col bg-white shadow-xl dark:bg-slate-900 ${
+          docked ? "md:border-r md:border-slate-200 dark:md:border-slate-800" : ""
+        }`}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b border-slate-200 px-5 pt-[max(1rem,env(safe-area-inset-top))] pb-4 dark:border-slate-800">

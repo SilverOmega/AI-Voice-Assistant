@@ -15,7 +15,7 @@ A private AI assistant that runs on your own computer. Type to it, talk to it, o
 - **Agents**: turn on helpers that work on a message before the reply: a researcher that searches the web, a document reader, a task planner and a coder that can read your project folder, propose file changes as diffs and test Python in a locked-down sandbox. They only read and draft; every email, event, code run or file change waits for your approval.
 - **Sessions**: create, rename and delete conversations. Voice turns go into the same history.
 - **Runtime settings**: switch provider, model, system prompt and temperature without restarting.
-- **Compact chat window**: the chat sits in a floating card. Conversations, plans, the schedule, service status and Settings are in the drawer behind the person icon. The pop-out icon opens the chat in its own small window.
+- **Full-screen chat**: the chat fills the window, with conversations, plans, the schedule, service status and Settings in the sidebar on the left. On a phone the sidebar becomes a drawer behind the person icon. The pop-out icon opens the chat in its own small window.
 - **Any language, and translation**: choose the language the assistant replies and talks in, from the list or by typing any language's name. Anyone following a chat can translate a message, or any text they select, into their own language.
 - **Web search, links and related topics**: questions are looked up on the web before the assistant answers. Under the reply you get the websites to read more and related topics to explore next; click a topic to ask about it. Search runs on your own SearXNG container, so no account or API key is needed.
 - **Exchange rates and gold prices**: the chart button in the header opens a dashboard with Vietcombank's rates against VND, PNJ's gold prices (SJC bars, ring gold, 24K and 18K, per lượng), the world gold price and a currency converter, with the time each was last updated. No account or API key is needed.
@@ -186,7 +186,7 @@ If the computer's address changes, run the script again and restart the frontend
   - **Currencies** lists Vietcombank's cash buy, transfer and sell rates in đồng, and the spread as a percentage. A dash means the bank doesn't buy that currency in cash.
   - Prices are fetched when you open the dashboard and kept for 10 minutes (`RATES_CACHE_MINUTES`). The refresh button asks again right away. If a source can't be reached, the dashboard says so and keeps showing the last prices it had.
   - The prices are indicative: check with the bank or shop before you buy or sell. Choose the currencies with `RATES_CURRENCIES`.
-- **Voice:** pick a mode in the voice bar, then click the round mic button.
+- **Voice:** click the wave button at the top of the chat to show the voice bar, pick a mode, then click the round mic button.
   - *Push to talk:* hold the button, or hold **Space** when not typing.
   - *Hands-free:* just talk. A pause of about 0.8 s ends your turn.
   - *Wake word:* say "Hey Jarvis". A chime confirms. After the reply you have a follow-up window (8 s by default) to keep talking before it waits for the wake word again. *Talk now* skips the wake word.
