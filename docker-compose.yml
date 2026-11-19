@@ -76,6 +76,11 @@ services:
       SEARXNG_URL: http://searxng:8080
       BRAVE_API_KEY: ${BRAVE_API_KEY:-}
       WEB_SEARCH_RESULTS: ${WEB_SEARCH_RESULTS:-5}
+      RATES_CURRENCIES: ${RATES_CURRENCIES:-USD,EUR,JPY,GBP,AUD,SGD,KRW,CNY,THB}
+      RATES_CACHE_MINUTES: ${RATES_CACHE_MINUTES:-10}
+      RATES_FX_URL: ${RATES_FX_URL-https://portal.vietcombank.com.vn/Usercontrols/TVPortal.TyGia/pXML.aspx}
+      RATES_GOLD_URL: ${RATES_GOLD_URL-https://edge-api.pnj.io/ecom-frontend/v1/get-gold-price?zone=00}
+      RATES_WORLD_GOLD_URL: ${RATES_WORLD_GOLD_URL-https://api.gold-api.com/price/XAU}
       AGENT_MODE: ${AGENT_MODE:-toggle}
       AGENT_MAX_STEPS: ${AGENT_MAX_STEPS:-4}
       AGENT_MAX_TOOL_CALLS: ${AGENT_MAX_TOOL_CALLS:-6}

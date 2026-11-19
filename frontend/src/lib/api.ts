@@ -17,6 +17,7 @@ import type {
   NotificationCategory,
   NotificationSettings,
   ProviderName,
+  Rates,
   Session,
   SessionDetail,
   Source,
@@ -206,6 +207,8 @@ export const api = {
     }),
   rejectAction: (id: string) =>
     request<Action>(`${CHAT_BASE}/api/actions/${id}/reject`, { method: "POST" }),
+  /** Exchange rates and gold prices; `refresh` makes the server ask the sources again. */
+  getRates: (refresh = false) => request<Rates>(`${CHAT_BASE}/api/rates${refresh ? "?refresh=true" : ""}`),
   listEvents: (since: string) =>
     request<CalendarEvent[]>(`${CHAT_BASE}/api/events?since=${encodeURIComponent(since)}`),
   deleteEvent: (id: string) => request<void>(`${CHAT_BASE}/api/events/${id}`, { method: "DELETE" }),

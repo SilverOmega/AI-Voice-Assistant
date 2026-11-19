@@ -440,3 +440,52 @@ class AuthStatus(BaseModel):
     configured: bool  # APP_PASSCODE is set, so other devices can sign in
     signed_in: bool  # always true on this computer
     app_url: str  # the address other devices open, if set in .env
+
+
+# ---- exchange rates and gold prices ------------------------------------------------------
+
+
+class CurrencyRate(BaseModel):
+    code: str  # "USD"
+    name: str  # "US DOLLAR"
+    buy: float | None  # VND the bank pays for one unit in cash; None = it doesn't buy cash
+    transfer: float | None  # VND the bank pays for one unit by transfer
+    sell: float | None  # VND the bank charges for one unit
+
+
+class GoldPrice(BaseModel):
+    code: str  # the seller's product code, e.g. "SJC"
+    name: str  # "Vàng miếng SJC 999.9"
+    buy: float  # VND per lượng (37.5 g) the shop pays
+    sell: float  # VND per lượng the shop charges
+
+
+class WorldGold(BaseModel):
+    usd_per_ounce: float  # spot price per troy ounce
+    vnd_per_luong: float | None  # the same converted at the bank's USD rate, before any premium
+
+
+class RatesSection(BaseModel):
+    source: str  # who the prices come from, e.g. "Vietcombank"
+    updated_at: str | None  # when the source last changed them (ISO, local time of the source)
+    stale: bool = False  # the last fetch failed; these are the prices from before
+    error: str | None = None  # why the last fetch failed, in plain words
+
+
+class FxSection(RatesSection):
+    rates: list[CurrencyRate]
+
+
+class GoldSection(RatesSection):
+    prices: list[GoldPrice]
+
+
+class WorldGoldSection(RatesSection):
+    price: WorldGold | None
+
+
+class RatesOut(BaseModel):
+    fx: FxSection | None  # None = turned off (RATES_FX_URL empty)
+    gold: GoldSection | None
+    world: WorldGoldSection | None
+    fetched_at: str  # when this server last asked the sources (UTC ISO)

@@ -333,3 +333,47 @@ export interface UploadedFile extends FileRef {
   /** PDF pages, slides or sheets. */
   pages: number | null;
 }
+
+// ---- exchange rates and gold prices (GET /api/rates) -----------------------
+
+/** One currency against VND, from the bank's table. null = the bank doesn't offer that rate. */
+export interface CurrencyRate {
+  code: string;
+  name: string;
+  buy: number | null;
+  transfer: number | null;
+  sell: number | null;
+}
+
+/** A gold product, in VND per lượng (37.5 g). */
+export interface GoldPrice {
+  code: string;
+  name: string;
+  buy: number;
+  sell: number;
+}
+
+export interface WorldGold {
+  usd_per_ounce: number;
+  /** The same at the bank's USD rate, before the domestic premium; null without a USD rate. */
+  vnd_per_luong: number | null;
+}
+
+export interface RatesSection {
+  /** Who the prices come from, e.g. "Vietcombank". */
+  source: string;
+  /** When the source last changed them (ISO). */
+  updated_at: string | null;
+  /** The last fetch failed and these are the prices from before. */
+  stale: boolean;
+  /** Why the last fetch failed, in plain words. */
+  error: string | null;
+}
+
+export interface Rates {
+  /** null = turned off on the server. */
+  fx: (RatesSection & { rates: CurrencyRate[] }) | null;
+  gold: (RatesSection & { prices: GoldPrice[] }) | null;
+  world: (RatesSection & { price: WorldGold | null }) | null;
+  fetched_at: string;
+}
