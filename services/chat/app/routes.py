@@ -32,6 +32,7 @@ from .llm.anthropic_provider import AnthropicProvider
 from .llm.claude_cli import ClaudeCliProvider
 from .notifications import NotificationCenter, shown_ip, visitor
 from .notifier import Notifier
+from .rates import RatesService
 from .schemas import (
     ActionApprove,
     ActionDraftRequest,
@@ -58,6 +59,7 @@ from .schemas import (
     NotificationSettings,
     NotifyTestOut,
     ProviderKey,
+    RatesOut,
     RuntimeConfigUpdate,
     SessionCreate,
     SessionDetail,
@@ -631,6 +633,13 @@ async def delete_event(event_id: str, request: Request) -> Response:
     if not await _svc(request).repo.delete_event(event_id):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Event not found")
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/api/rates", response_model=RatesOut)
+async def get_rates(request: Request, refresh: bool = False) -> RatesOut:
+    """Exchange rates against VND and gold prices. `refresh` asks the sources again now."""
+    rates: RatesService = request.app.state.rates
+    return await rates.get(refresh=refresh)
 
 
 def _attachment(title: str, ext: str) -> str:

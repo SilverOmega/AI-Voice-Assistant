@@ -14,6 +14,7 @@ from .config import Settings, get_settings
 from .llm import ProviderRegistry
 from .notifications import NotificationCenter
 from .notifier import Notifier
+from .rates import RatesService
 from .repository import Repository
 from .llm.anthropic_provider import AnthropicProvider
 from .routes import ANTHROPIC_KEY_PREF, router
@@ -57,6 +58,7 @@ def create_app(
             await claude.set_app_key(await repo.get_preference(ANTHROPIC_KEY_PREF))
         app.state.chat.start_warm_up()
         app.state.automation = Automation(repo, settings, workspace=workspace)
+        app.state.rates = RatesService(settings)
         reminders = asyncio.create_task(
             app.state.notifications.remind_loop(settings.notify_remind_minutes)
         )
@@ -68,6 +70,7 @@ def create_app(
             await app.state.notifications.aclose()
             await app.state.notifier.aclose()
             await app.state.automation.aclose()
+            await app.state.rates.aclose()
             await app.state.chat.aclose()
             if search:
                 await search.aclose()

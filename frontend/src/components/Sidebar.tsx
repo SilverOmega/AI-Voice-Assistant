@@ -4,6 +4,7 @@ import { api } from "../lib/api";
 import { formatWhen } from "../lib/notify";
 import { PLAN_TEMPLATES, type PlanTemplate } from "../lib/plans";
 import type { CalendarEvent, Session } from "../lib/types";
+import { Rates } from "./Rates";
 import { ChevronDownIcon, DownloadIcon, GearIcon, PencilIcon, PlusIcon, TrashIcon, XIcon } from "./icons";
 
 interface Props {
@@ -68,6 +69,7 @@ export function Sidebar(props: Props) {
           ))}
         </nav>
         {props.events.length > 0 && <Upcoming events={props.events} onDelete={props.onDeleteEvent} />}
+        <Rates visible={open} />
         <div className="border-t border-slate-200 p-3 dark:border-slate-800">
           <div className="mb-2 space-y-1">
             <StatusDot label="Chat" status={health.chat} />

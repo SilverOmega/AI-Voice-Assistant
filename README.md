@@ -18,6 +18,7 @@ A private AI assistant that runs on your own computer. Type to it, talk to it, o
 - **Compact chat window**: the chat sits in a floating card. Conversations, plans, the schedule, service status and Settings are in the drawer behind the person icon. The pop-out icon opens the chat in its own small window.
 - **Any language, and translation**: choose the language the assistant replies and talks in, from the list or by typing any language's name. Anyone following a chat can translate a message, or any text they select, into their own language.
 - **Web search, links and related topics**: questions are looked up on the web before the assistant answers. Under the reply you get the websites to read more and related topics to explore next; click a topic to ask about it. Search runs on your own SearXNG container, so no account or API key is needed.
+- **Exchange rates and gold prices**: a Rates panel in the drawer shows Vietcombank's rates against VND, PNJ's gold prices (SJC bars, ring gold, 24K and 18K, per lượng) and the world gold price, with the time each was last updated. No account or API key is needed.
 - **Pet**: a cat, dog or bunny sits next to the chat. While the assistant is offline (the chat service or its model is down) it falls asleep; point at it to hear it snore, or tap it on a phone. Choose the pet, or none, in Settings.
 
 ## Architecture
@@ -41,7 +42,7 @@ A private AI assistant that runs on your own computer. Type to it, talk to it, o
 
 | Service | Responsibility | Key endpoints |
 |---|---|---|
-| `services/chat` | Conversations, history (SQLite), LLM streaming, agents, tasks, web search, translation, runtime config | `POST /api/translate`, `GET/POST /api/sessions`, `GET/PATCH/DELETE /api/sessions/{id}`, `POST /api/sessions/{id}/messages[/stream]`, `POST /api/sessions/{id}/actions`, `POST /api/actions/{id}/approve\|reject`, `GET /api/agents`, `GET/PATCH /api/config`, `GET /api/models`, `GET /health` |
+| `services/chat` | Conversations, history (SQLite), LLM streaming, agents, tasks, web search, translation, runtime config | `POST /api/translate`, `GET/POST /api/sessions`, `GET/PATCH/DELETE /api/sessions/{id}`, `POST /api/sessions/{id}/messages[/stream]`, `POST /api/sessions/{id}/actions`, `POST /api/actions/{id}/approve\|reject`, `GET /api/agents`, `GET /api/rates`, `GET/PATCH /api/config`, `GET /api/models`, `GET /health` |
 | `services/voice` | Endpointing, STT, TTS, orchestration of a voice turn | `WS /ws/voice`, `POST /api/stt`, `POST /api/tts`, `GET /api/voices`, `GET /health` |
 | `searxng` | Web search for the chat service (Docker only, no published port) | `GET /search?format=json` |
 | `services/wakeword` | Always-on wake-phrase detection | `WS /ws/wakeword`, `GET /api/models`, `GET /health` |
@@ -178,6 +179,11 @@ If the computer's address changes, run the script again and restart the frontend
   - Small talk ("thanks", "hi there") and messages with pictures or documents aren't searched. Voice questions are searched too; the links appear in the chat, and the spoken reply doesn't read them out.
   - The links are saved with the reply, so they're still there later and on other devices.
   - What is searched: your message as you typed it. It goes from your SearXNG container to the search engines it uses (Google, Bing, DuckDuckGo, Wikipedia and others), without your browser's cookies or sign-ins, though they do see your internet connection's address. Turn the globe off for questions you'd rather not send.
+- **Rates:** open **Rates** in the drawer to see exchange rates and gold prices.
+  - **Gold** lists the buy and sell price per lượng (37.5 g) at PNJ for SJC bars, ring gold 999.9, 24K and 18K jewellery gold. Below them, the world price in US dollars per ounce and what that comes to per lượng at Vietcombank's dollar rate. Vietnamese gold usually costs more than that.
+  - **Currencies** lists Vietcombank's cash buy and sell rates in đồng. A dash means the bank doesn't buy that currency in cash.
+  - Prices are fetched when you open the panel and kept for 10 minutes (`RATES_CACHE_MINUTES`). The refresh button asks again right away. If a source can't be reached, the panel says so and keeps showing the last prices it had.
+  - The prices are indicative: check with the bank or shop before you buy or sell. Choose the currencies with `RATES_CURRENCIES`.
 - **Voice:** pick a mode in the voice bar, then click the round mic button.
   - *Push to talk:* hold the button, or hold **Space** when not typing.
   - *Hands-free:* just talk. A pause of about 0.8 s ends your turn.
@@ -218,6 +224,11 @@ All settings are environment variables. Put them in `.env`; Docker and the nativ
 | `BRAVE_API_KEY` | — | For `WEB_SEARCH=brave` |
 | `WEB_SEARCH_RESULTS` | `5` | Pages found per question (1–10), shown under the reply and given to the model |
 | `SEARXNG_URL` | `http://localhost:8888` | Native runs only: your own SearXNG with `json` in `search.formats` (see `services/searxng/settings.yml`). Docker uses the bundled container |
+| `RATES_CURRENCIES` | `USD,EUR,JPY,GBP,AUD,SGD,KRW,CNY,THB` | Currencies in the Rates panel, in this order (codes from Vietcombank's table) |
+| `RATES_CACHE_MINUTES` | `10` | How long fetched rates and gold prices are kept before they're fetched again (a failed fetch is retried after a minute) |
+| `RATES_FX_URL` | Vietcombank's rate table (XML) | Exchange rates against VND. Empty hides them |
+| `RATES_GOLD_URL` | PNJ's gold prices (JSON) | Vietnamese gold prices. Empty hides them |
+| `RATES_WORLD_GOLD_URL` | `https://api.gold-api.com/price/XAU` | The world gold price in USD per ounce. Empty hides it |
 | `MAX_HISTORY_MESSAGES` | `30` | Messages of context sent to the model |
 | `DOCUMENT_MAX_CHARS` | `40000` | Characters of attached document text sent with one request (about 10,000 tokens), newest documents first |
 | `OLLAMA_MAX_CTX` | `16384` | Largest context window (tokens) requested from Ollama when a prompt outgrows its default, as with documents. More needs more memory; `0` leaves it to Ollama |

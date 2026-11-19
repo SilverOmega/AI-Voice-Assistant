@@ -58,6 +58,14 @@ class Settings(BaseSettings):
     brave_api_key: str = ""
     web_search_results: int = Field(default=5, ge=1, le=10)
 
+    # Exchange rates against VND and gold prices for the sidebar's Rates panel, fetched when
+    # someone opens it and kept for RATES_CACHE_MINUTES. An empty URL hides that part.
+    rates_currencies: str = "USD,EUR,JPY,GBP,AUD,SGD,KRW,CNY,THB"
+    rates_cache_minutes: int = Field(default=10, ge=1)
+    rates_fx_url: str = "https://portal.vietcombank.com.vn/Usercontrols/TVPortal.TyGia/pXML.aspx"
+    rates_gold_url: str = "https://edge-api.pnj.io/ecom-frontend/v1/get-gold-price?zone=00"
+    rates_world_gold_url: str = "https://api.gold-api.com/price/XAU"
+
     # Task automation. Approved emails are sent over SMTP if it's set up; otherwise saved to the
     # mailbox's Drafts folder over IMAP if that's set up; otherwise they open ready to send in
     # Gmail or Outlook on the web, or in the computer's default mail app (mailto:).
