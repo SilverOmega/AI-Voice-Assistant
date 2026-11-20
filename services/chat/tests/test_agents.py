@@ -11,6 +11,8 @@ from app.llm.base import AgentStep, AgentTurn, ToolCall
 from app.main import create_app
 
 from .test_api import new_session, parse_sse
+from .test_github import REPO, FakeGitHub
+from .test_github import make_client as make_github
 from .test_search import FakeSearch
 
 NOW = "2026-11-17T09:30"
@@ -102,12 +104,15 @@ async def env(provider, project, tmp_path, settings_kw):
 
     async with app.router.lifespan_context(app):
         app.state.chat.search = FakeSearch()
+        github = make_github(FakeGitHub())
+        app.state.chat.github = github
         auto = app.state.automation
         await auto.aclose()
         auto._http = httpx.AsyncClient(transport=httpx.MockTransport(sandbox))
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
             yield c, app, runs
+        await github.aclose()
 
 
 async def ask(client, sid: str, content: str, **extra) -> list[tuple[str, dict]]:
@@ -273,6 +278,71 @@ async def test_agents_endpoint_and_config(env):
     assert (await client.get("/api/config")).json()["agent_mode"] == "toggle"
     info = (await client.get("/api/automation")).json()
     assert info["code_runs"] and info["project"]
+
+
+# ---- code repositories ---------------------------------------------------------------------
+
+
+async def test_code_researcher_reads_the_latest_commit_and_its_parent(env, provider):
+    client, _, _ = env
+    provider.plan = {"steps": [{"agent": "code_researcher", "task": "Explain the latest commit of bionemo-ir"}]}
+    provider.steps = [
+        AgentStep("", (ToolCall("id-find", "find_repository", {"name": "bionemo-ir"}),)),
+        call("list_commits", repo=REPO, count=3),
+        call("show_commit", repo=REPO, sha="6a5acc1"),
+        AgentStep("6a5acc1 by cubin-bot refreshes CUBIN packs after e289332 (SM107 support)."),
+    ]
+    sid = await new_session(client)
+    events = await ask(client, sid, "explain the latest commit of bionemo-ir")
+    done = [d for e, d in events if e == "tool" and d["status"] != "running"]
+    assert [(t["tool"], t["status"]) for t in done] == [
+        ("find_repository", "done"), ("list_commits", "done"), ("show_commit", "done"),
+    ]
+    assert REPO in done[0]["output"]
+    # The helper saw the commit list and the commit itself.
+    turns = provider.step_calls[-1][0]
+    tool_texts = [t.content for t in turns if t.role == "tool"]
+    assert "6a5acc1 2026-11-18 cubin-bot: chore: refresh CuTeDSL CUBIN packs" in tool_texts[1]
+    assert "Parents: e289332" in tool_texts[2]
+    tools = {t.name for t in provider.step_calls[0][2]}
+    assert {"find_repository", "list_commits", "show_commit", "read_repo_file"} <= tools
+    assert "e289332 (SM107 support)" in provider.streams[0][1].system
+
+
+async def test_code_questions_start_the_helpers_without_the_switch(env, provider):
+    client, _, _ = env
+    sid = await new_session(client)
+    # The planner answers directly, but a code question still gets the code researcher.
+    events = await ask(client, sid, "explain the latest commit of bionemo-ir", agents=False)
+    plan = dict(events)["plan"]["steps"]
+    assert [s["agent"] for s in plan] == ["code_researcher"]
+    assert "explain the latest commit of bionemo-ir" in plan[0]["task"]
+    # Not for other messages, and not for voice.
+    provider.plans.clear()
+    await ask(client, sid, "I'm committed to learning Spanish", agents=False)
+    await ask(client, sid, "What's in the latest commit of numpy?", agents=False, source="voice")
+    assert provider.plans == []
+
+
+@pytest.mark.parametrize("settings_kw", [{"github_lookup": False}])
+async def test_github_lookup_off(env, provider):
+    client, app, _ = env
+    app.state.chat.github = None
+    sid = await new_session(client)
+    await ask(client, sid, "explain the latest commit of bionemo-ir", agents=False)
+    assert provider.plans == []
+    body = (await client.get("/api/agents")).json()
+    assert "code_researcher" not in [a["name"] for a in body["agents"]]
+
+
+async def test_github_errors_go_back_to_the_model(env, provider):
+    client, _, _ = env
+    provider.plan = {"steps": [{"agent": "code_researcher", "task": "x"}]}
+    provider.steps = [call("show_commit", repo="nobody/nothing", sha="abc1234"), AgentStep("Not found.")]
+    sid = await new_session(client)
+    events = await ask(client, sid, "What did commit abc1234 in nobody/nothing change?")
+    tool = [d for e, d in events if e == "tool" and d["status"] != "running"][0]
+    assert tool["status"] == "failed" and "isn't public" in tool["output"]
 
 
 # ---- coding ------------------------------------------------------------------------------

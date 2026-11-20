@@ -61,6 +61,25 @@ def worth_searching(text: str) -> bool:
     return not all(w.replace("’", "'") in _SMALL_TALK_WORDS for w in words)
 
 
+# Signs a message is about a code repository: a link to one, or wording that is rarely about
+# anything else. "commit" alone is left out ("commit to a plan"); it counts next to words like
+# "latest" or "history".
+_CODE_CUES = re.compile(
+    r"\b(?:github|gitlab)(?:\.com)?\b|\bgit\s+(?:log|history|repo)\b"
+    r"|\b(?:repo|repos|repository|repositories|codebase|changelog|pypi)\b"
+    r"|\bsource\s+code\b|\brelease\s+notes\b|\b(?:pull|merge)\s+requests?\b|\bnpm\s+package\b"
+    r"|\b(?:latest|last|recent|newest|new|first|previous|initial|this|that|which)\s+commits?\b"
+    r"|\bcommits?\s+(?:history|log|message|hash|diff|in|on|to\s+main|to\s+master)\b"
+    r"|\bcommit\s+[0-9a-f]{7,40}\b",
+    re.IGNORECASE,
+)
+
+
+def about_code(text: str) -> bool:
+    """Whether a message asks about a code repository (its commits, releases or code)."""
+    return bool(_CODE_CUES.search(text))
+
+
 def search_query(text: str) -> str:
     """The message as a search query: one line, not too long."""
     query = " ".join(text.split())

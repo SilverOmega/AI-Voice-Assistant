@@ -85,6 +85,8 @@ services:
       AGENT_MAX_STEPS: ${AGENT_MAX_STEPS:-4}
       AGENT_MAX_TOOL_CALLS: ${AGENT_MAX_TOOL_CALLS:-6}
       AGENT_TIMEOUT_SECONDS: ${AGENT_TIMEOUT_SECONDS:-180}
+      GITHUB_LOOKUP: ${GITHUB_LOOKUP:-true}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
       # The project folder from .env is mounted at /workspace; empty = no project folder.
       PROJECT_DIR: ${PROJECT_DIR:+/workspace}
       SANDBOX_URL: ${SANDBOX_URL-http://sandbox:8004}

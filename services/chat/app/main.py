@@ -11,6 +11,7 @@ from . import auth
 from .automation import Automation
 from .chat_service import ChatService
 from .config import Settings, get_settings
+from .github import GitHubClient
 from .llm import ProviderRegistry
 from .notifications import NotificationCenter
 from .notifier import Notifier
@@ -50,8 +51,9 @@ def create_app(
         workspace = Workspace(settings.project_dir) if settings.project_dir else None
         if workspace and not workspace.available:
             log.warning("PROJECT_DIR %s is not a folder; the code helper won't see a project", settings.project_dir)
+        github = GitHubClient(settings.github_token) if settings.github_lookup else None
         app.state.chat = ChatService(
-            repo, providers, settings, runtime, app.state.notifications, search, workspace
+            repo, providers, settings, runtime, app.state.notifications, search, workspace, github
         )
         claude = providers.get("anthropic") if "anthropic" in providers.names else None
         if isinstance(claude, AnthropicProvider):
@@ -74,6 +76,8 @@ def create_app(
             await app.state.chat.aclose()
             if search:
                 await search.aclose()
+            if github:
+                await github.aclose()
             await providers.aclose()
             await repo.close()
 

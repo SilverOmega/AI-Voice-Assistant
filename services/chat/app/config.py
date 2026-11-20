@@ -105,6 +105,11 @@ class Settings(BaseSettings):
     agent_max_steps: int = Field(default=4, ge=1, le=10)  # helpers the lead may call per message
     agent_max_tool_calls: int = Field(default=6, ge=1, le=30)  # tool uses per helper
     agent_timeout_seconds: float = Field(default=180.0, ge=10.0)  # then it answers with what it has
+    # The code researcher helper reads public GitHub repositories (commits, diffs, files), and
+    # starts on its own for typed questions about one. A token (no scopes needed) raises GitHub's
+    # limit from about 60 lookups an hour to 5,000.
+    github_lookup: bool = True
+    github_token: str = ""
     # A project folder the code helper may read, and change after approval. Empty = none.
     project_dir: str = ""
     # The code sandbox service (services/sandbox) that runs approved Python. Empty = no code runs.

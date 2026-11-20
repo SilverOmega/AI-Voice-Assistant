@@ -18,7 +18,7 @@ from ..llm import ChatTurn, GenerationParams, LLMAuthError, LLMError, LLMProvide
 from ..llm.base import AgentTurn
 from ..schemas import ActionOut, AgentStepTrace, AgentTrace, ToolTrace, WebResults
 from . import prompts
-from .specialists import BY_NAME, AgentSpec, available_agents, available_tools
+from .specialists import BY_NAME, CODE_RESEARCHER, AgentSpec, available_agents, available_tools
 from .tools import ToolResult, Toolbox, clip, preview
 
 if TYPE_CHECKING:
@@ -43,8 +43,12 @@ class Orchestrator:
         session_id: str,
         content: str,
         now: datetime,
+        code_question: bool = False,
     ):
         self.chat = chat
+        # The message is about a code repository: the code researcher works on it even when the
+        # planner (a small local model, say) would answer from memory or only search the web.
+        self.code_question = code_question
         self.provider = provider
         self.model = model
         self.content = content
@@ -71,7 +75,12 @@ class Orchestrator:
     async def run(self, history: list[ChatTurn]) -> AsyncIterator[ChatEvent]:
         from ..chat_service import ChatEvent
 
-        steps = await self._plan(history, available_agents(self.box))
+        agents = available_agents(self.box)
+        steps = await self._plan(history, agents)
+        if self.code_question and any(a.name == CODE_RESEARCHER for a in agents):
+            if not any(s.name == CODE_RESEARCHER for s, _ in steps):
+                task = f"Look this up in the code repository it is about: {clip(self.content, 1_800)}"
+                steps = [(BY_NAME[CODE_RESEARCHER], task), *steps][: self.settings.agent_max_steps]
         if not steps:
             return
         self.trace.steps = [
