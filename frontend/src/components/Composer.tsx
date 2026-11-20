@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ClipRecorder } from "../audio/recorder";
 import { api } from "../lib/api";
 import { ATTACH_ACCEPT, MAX_FILES, MAX_FILE_MB, describeFile, isImage } from "../lib/files";
@@ -98,6 +98,19 @@ export function Composer({
   const recorder = useRef(new ClipRecorder());
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const taskMenuRef = useRef<HTMLDivElement>(null);
+  const attachMenuRef = useRef<HTMLDivElement>(null);
+
+  // Close the open menu on a click or tap anywhere else (its own button toggles it).
+  useEffect(() => {
+    if (!menu) return;
+    const box = menu === "task" ? taskMenuRef : attachMenuRef;
+    const away = (e: PointerEvent) => {
+      if (!box.current?.contains(e.target as Node)) setMenu(null);
+    };
+    document.addEventListener("pointerdown", away);
+    return () => document.removeEventListener("pointerdown", away);
+  }, [menu]);
 
   const uploading = docs.some((d) => !d.file);
   const readyDocs = docs.flatMap((d) => (d.file ? [d.file] : []));
@@ -385,7 +398,7 @@ export function Composer({
               e.target.value = ""; // allow picking the same file again
             }}
           />
-          <div className="relative" onKeyDown={(e) => e.key === "Escape" && setMenu(null)}>
+          <div ref={taskMenuRef} className="relative" onKeyDown={(e) => e.key === "Escape" && setMenu(null)}>
             <button
               onClick={() => setMenu((m) => (m === "task" ? null : "task"))}
               aria-expanded={menu === "task"}
@@ -430,7 +443,7 @@ export function Composer({
               </div>
             )}
           </div>
-          <div className="relative" onKeyDown={(e) => e.key === "Escape" && setMenu(null)}>
+          <div ref={attachMenuRef} className="relative" onKeyDown={(e) => e.key === "Escape" && setMenu(null)}>
             <button
               onClick={() => setMenu((m) => (m === "attach" ? null : "attach"))}
               disabled={task !== null}
