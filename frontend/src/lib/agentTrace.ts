@@ -80,6 +80,11 @@ export function activeStep(trace: AgentTrace): AgentStepTrace | undefined {
 const TOOL_LABELS: Record<string, string> = {
   web_search: "Searched the web",
   fetch_page: "Read a web page",
+  find_repository: "Found the repository",
+  list_commits: "Listed commits",
+  show_commit: "Read a commit",
+  list_repo_files: "Listed repository files",
+  read_repo_file: "Read a repository file",
   list_documents: "Listed documents",
   read_document: "Read a document",
   translate: "Translated",

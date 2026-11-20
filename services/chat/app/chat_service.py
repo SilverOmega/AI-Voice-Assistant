@@ -26,7 +26,8 @@ from .llm import (
 from .notifications import NotificationCenter
 from .repository import Repository
 from .schemas import ActionOut, AgentTrace, FileRef, MessageOut, RuntimeConfig, Source, WebResults
-from .search import SearchEngine, SearchError, results_context, search_query, worth_searching
+from .github import GitHubClient
+from .search import SearchEngine, SearchError, about_code, results_context, search_query, worth_searching
 from .translate import TranslationCache, reply_language_instruction, translate
 from .workspace import Workspace
 
@@ -84,9 +85,11 @@ class ChatService:
         notifications: NotificationCenter | None = None,
         search: SearchEngine | None = None,
         workspace: Workspace | None = None,
+        github: GitHubClient | None = None,
     ):
         self.repo = repo
         self.workspace = workspace
+        self.github = github
         self.notifications = notifications
         self.search = search
         self.registry = registry
@@ -148,18 +151,27 @@ class ChatService:
         if lock.locked():
             raise SessionBusy(session_id)
         content = content.strip()
-        helpers = self.use_agents(agents, content, files)
+        helpers = self.use_agents(agents, content, files, source)
         return self._run_turn(lock, session_id, content, source, images, files, language, search, helpers, now)
 
-    def use_agents(self, asked: bool, content: str, files: Sequence[FileRef] = ()) -> bool:
+    def use_agents(
+        self, asked: bool, content: str, files: Sequence[FileRef] = (), source: Source = "text"
+    ) -> bool:
         """Helpers work on a message when the user turned them on for it, or on every message
-        with AGENT_MODE=always, where small talk ("thanks!") skips them to stay quick."""
+        with AGENT_MODE=always, where small talk ("thanks!") skips them to stay quick.
+
+        With AGENT_MODE=toggle they also start on their own for a typed question about a code
+        repository ("explain the latest commit of ..."), which only the code researcher's tools
+        can answer. Spoken turns keep the switch: helpers make a voice reply much slower.
+        """
         mode = self.settings.agent_mode
         if mode == "off":
             return False
         if asked:
             return True
-        return mode == "always" and (bool(files) or worth_searching(content))
+        if mode == "always":
+            return bool(files) or worth_searching(content)
+        return source == "text" and self.github is not None and about_code(content)
 
     async def _run_turn(
         self,
@@ -191,7 +203,9 @@ class ChatService:
             )
             system = self.runtime.system_prompt
             if helpers:
-                team = Orchestrator(self, provider, model, session_id, content, _local_now(now))
+                team = Orchestrator(
+                    self, provider, model, session_id, content, _local_now(now), code_question=about_code(content)
+                )
                 async with aclosing(team.run(turns)) as work:
                     async for event in work:
                         yield event

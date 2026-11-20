@@ -59,6 +59,15 @@ See README → *Chat stream events*. The frontend folds `plan`, `agent` and `too
 4. Add it to a helper's `tools` in `specialists.py`, and give it a plain label in `TOOL_LABELS` (`agentTrace.ts`).
 5. Test it through `tests/test_agents.py` with `ScriptedAgentProvider`: script a plan and `AgentStep`s that call the tool, then assert on the events and the stored state.
 
+## The code researcher
+
+`code_researcher` reads public GitHub repositories through `app/github.py` (`GitHubClient`): `find_repository`, `list_commits`, `show_commit`, `list_repo_files`, `read_repo_file`, plus `web_search` and `fetch_page`.
+
+- **Fixed hosts only.** The client talks to `api.github.com`, `pypi.org` and `registry.npmjs.org`. The model supplies `owner/name`, refs and paths, which are checked against strict patterns, never hosts, so the SSRF checks `fetch_page` needs don't apply. `GITHUB_TOKEN` is sent to the GitHub API only.
+- **Finding the repo.** A link or `owner/name` is used directly. A package name is looked up on PyPI and npm for a GitHub link (that is how `bionemo-ir` leads to its repository). GitHub's search API, which allows only a few calls a minute, is used only when nothing matched directly.
+- **Commits stay small.** `format_commit` caps a commit at about 8,000 characters: header, message, the file list with +/−, then clipped diffs. Lockfiles, build output, LFS pointers and large data files are listed but their diffs are left out.
+- **Starting on its own.** `search.about_code` spots messages about a repository (links, "repo", "changelog", "latest commit", …). With `AGENT_MODE=toggle`, a typed message like that starts the helpers even with the button off (`ChatService.use_agents`). Whenever helpers run on such a message, `Orchestrator` puts a `code_researcher` step first if the plan left it out, so a small planner can't answer from memory instead.
+
 ## Adding a helper
 
 Add an `AgentSpec` to `SPECIALISTS`. The `description` is what the planner reads to decide when to use it, and the `role` is what the helper reads about its own job. `available_agents` hides helpers that have no usable tools, except the coder, which can always write code.

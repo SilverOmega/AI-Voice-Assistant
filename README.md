@@ -143,6 +143,7 @@ If the computer's address changes, run the script again and restart the frontend
   - **On your phone:** set `NOTIFY_PHONE` (SMS through Twilio) or `NTFY_TOPIC` (free push through the ntfy app) to get a text whenever a task needs review, and one more reminder if it's still waiting after `NOTIFY_REMIND_MINUTES`. The text names the task (for example *Email to anna@example.com: "Running late"*). It only reminds you; approving still happens in the app. Settings → *Notifications* has a **Send test notification** button.
 - **Agents:** the team button next to the globe lets helpers work on a message before the assistant answers (off by default, kept per device). A lead assistant decides who should help, hands each a task, and writes the reply from what they report:
   - **Researcher** searches the web and reads pages. Its links appear under the reply as with web search.
+  - **Code researcher** looks inside public GitHub repositories: it finds a project's repository (also from a PyPI or npm package name), lists its recent commits, shows what a commit changed and reads files. Ask "explain the latest commit of bionemo-ir" and it reads that commit, plus the one before it when the newest is just an automated follow-up. It starts on its own when you type a question about a repository, its commits, releases or code, even with the team button off (`GITHUB_LOOKUP=false` turns it off).
   - **Document reader** reads, quotes and translates the documents attached in the chat.
   - **Task planner** drafts emails, events, documents and workflow runs, and checks your schedule.
   - **Coder** writes, explains and fixes code. With `PROJECT_DIR` set it reads your project folder and proposes changes to its files; with the code sandbox it proposes running Python to test it.
@@ -253,6 +254,8 @@ All settings are environment variables. Put them in `.env`; Docker and the nativ
 | `AGENT_MAX_STEPS` | `4` | Helpers the lead assistant may call for one message (1–10) |
 | `AGENT_MAX_TOOL_CALLS` | `6` | Tool uses per helper (1–30); then it reports what it has |
 | `AGENT_TIMEOUT_SECONDS` | `180` | Time the helpers get before the reply is written from what they found |
+| `GITHUB_LOOKUP` | `true` | Let the code researcher read public GitHub repositories, and start on its own for typed questions about one |
+| `GITHUB_TOKEN` | — | Optional GitHub token (no permissions needed). Raises GitHub's limit from about 60 lookups an hour to 5,000 |
 | `PROJECT_DIR` | — | A folder the coder may read and, after you approve each change, edit. Docker mounts it at `/workspace`. `.env` files, keys, `.git`, `node_modules` and similar stay hidden |
 | `SANDBOX_URL` | Docker: `http://sandbox:8004` | The code sandbox. Native runs: empty = no code runs (the sandbox needs Linux or macOS) |
 | `SANDBOX_TOKEN` | — | Any long random text; the chat service and the sandbox must share it |
@@ -392,6 +395,7 @@ docker-compose.yml, docker-compose.gpu.yml, .env.example
 | Agents take a long time | Each helper is a few extra model calls. Use a model with tool support (`ollama pull qwen2.5:7b`), lower `AGENT_MAX_TOOL_CALLS`, or turn Agents off for simple questions. Models without tool support still work, more slowly, by picking tools as JSON. |
 | No Agents button | `AGENT_MODE` is `off` or `always` in `.env`. |
 | "Code can't be run here" | The sandbox isn't set up: in Docker check `docker compose ps sandbox`; natively there is none (it needs Linux or macOS). |
+| The code researcher says GitHub's limit is used up | Without a token GitHub allows about 60 lookups an hour. Create a token at https://github.com/settings/tokens (no permissions needed), put it in `GITHUB_TOKEN` and restart the chat service. |
 | The coder can't see my project | Set `PROJECT_DIR` in `.env` and restart the chat service (Docker: `docker compose up -d chat`). Hidden files such as `.env` and folders like `node_modules` are skipped on purpose. |
 | "The file changed since this edit was drafted" | The file was edited after the helper read it. Ask again so it works from the current version. |
 | "The Claude bridge isn't running" | Start `scripts\bridge.ps1` (or `bridge.sh`) and keep it open, or run `scripts\bridge.ps1 -Install` once so it starts with Windows. Then open the model menu again. |
