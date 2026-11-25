@@ -16,9 +16,15 @@ from typing import BinaryIO, Protocol
 
 import numpy as np
 
-from .config import Settings
+from .config import SAMPLE_RATE, Settings
 
 log = logging.getLogger(__name__)
+
+# Text Whisper may write for one clip: generous for fast speech, short enough to cut a loop.
+TOKENS_PER_SECOND = 8
+MAX_NEW_TOKENS = 400  # Whisper's own limit is 448 including the prompt
+# A model that ran within this many seconds is still quick; warm_up() skips it.
+WARM_FOR_S = 120
 
 # Whisper tends to "hear" these in silence or noise.
 _HALLUCINATIONS = {"", "you", "thank you.", "thanks for watching!", "thank you for watching.", "."}
@@ -92,7 +98,9 @@ class STTEngine(Protocol):
     status: EngineStatus
 
     def load(self) -> None: ...
-    def transcribe(self, audio: np.ndarray | BinaryIO, language: str | None = None) -> Transcript: ...
+    def transcribe(
+        self, audio: np.ndarray | BinaryIO, language: str | None = None, quick: bool = False
+    ) -> Transcript: ...
 
 
 class TTSEngine(Protocol):
@@ -108,6 +116,7 @@ class WhisperSTT:
         self.settings = settings
         self._model = None
         self._lock = threading.Lock()
+        self._last_used = float("-inf")
         self.status = EngineStatus(
             "faster-whisper", detail={"model": settings.stt_model, "device": settings.stt_device}
         )
@@ -136,25 +145,66 @@ class WhisperSTT:
             finally:
                 self.status.loading = False
 
+    def warm_up(self) -> None:
+        """Run the model once on a short clip unless it ran a moment ago.
+
+        After the computer has been idle for a while, the first run can take many seconds
+        (memory and CPU wake up slowly). Live dictation calls this when the mic opens, so
+        that wait is over before the user's first words instead of swallowing them.
+        """
+        if time.monotonic() - self._last_used < WARM_FOR_S:
+            return
+        self.load()
+        started = time.perf_counter()
+        segments, _ = self._model.transcribe(
+            np.zeros(SAMPLE_RATE, dtype=np.float32),
+            language="en" if not self.multilingual else (self.settings.stt_language or "en"),
+            beam_size=1,
+            vad_filter=False,  # with the filter, silence would skip the model altogether
+            without_timestamps=True,
+            temperature=0.0,
+            max_new_tokens=4,
+        )
+        list(segments)
+        self._last_used = time.monotonic()
+        log.info("whisper warmed up in %.1fs", time.perf_counter() - started)
+
     @property
     def multilingual(self) -> bool:
         """English-only models (tiny.en, base.en...) can't recognize other languages."""
         return not self.settings.stt_model.endswith(".en")
 
-    def transcribe(self, audio: np.ndarray | BinaryIO, language: str | None = None) -> Transcript:
-        """`language`: a code such as "vi" for this clip, else STT_LANGUAGE (empty = detect)."""
+    def transcribe(
+        self, audio: np.ndarray | BinaryIO, language: str | None = None, quick: bool = False
+    ) -> Transcript:
+        """`language`: a code such as "vi" for this clip, else STT_LANGUAGE (empty = detect).
+
+        `quick`: one fast pass for text that is redone anyway (live dictation while the user is
+        still talking). Whisper normally retries a doubtful passage at higher temperatures, which
+        on a CPU can take many times longer than the first pass.
+        """
         self.load()
         started = time.perf_counter()
         if not self.multilingual:
             language = "en"
+        options: dict = {}
+        if isinstance(audio, np.ndarray) and len(audio):
+            # Whisper sometimes loops on a phrase ("to my- to my- ..."): cap the text well above
+            # what anyone can say in that time, so a loop ends quickly.
+            seconds = len(audio) / SAMPLE_RATE
+            options["max_new_tokens"] = min(MAX_NEW_TOKENS, int(seconds * TOKENS_PER_SECOND) + 16)
+        if quick:
+            options.update(temperature=0.0, without_timestamps=True)
         segments, info = self._model.transcribe(
             audio,
             language=language or self.settings.stt_language or None,
             beam_size=self.settings.stt_beam_size,
             vad_filter=True,
             condition_on_previous_text=False,
+            **options,
         )
         kept = [s.text for s in segments if not (s.no_speech_prob > 0.6 and s.avg_logprob < -1.0)]
+        self._last_used = time.monotonic()
         text = " ".join(t.strip() for t in kept).strip()
         if text.lower() in _HALLUCINATIONS:
             text = ""

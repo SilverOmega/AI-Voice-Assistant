@@ -213,17 +213,7 @@ export const api = {
     request<CalendarEvent[]>(`${CHAT_BASE}/api/events?since=${encodeURIComponent(since)}`),
   deleteEvent: (id: string) => request<void>(`${CHAT_BASE}/api/events/${id}`, { method: "DELETE" }),
 
-  // ---- voice / wake-word services --------------------------------------
-  /** `language`: the code of the language spoken ("vi"); null = the server's STT_LANGUAGE. */
-  transcribe: async (audio: Blob, language: string | null = null): Promise<{ text: string; elapsed: number }> => {
-    const form = new FormData();
-    const ext = audio.type.includes("ogg") ? "ogg" : audio.type.includes("mp4") ? "m4a" : "webm";
-    form.append("file", audio, `dictation.${ext}`);
-    const query = language ? `?language=${encodeURIComponent(language)}` : "";
-    const resp = await fetch(`${VOICE_BASE}/api/stt${query}`, { method: "POST", body: form });
-    if (!resp.ok) throw await failure(resp);
-    return resp.json();
-  },
+  // ---- voice / wake-word services (dictation streams over audio/dictation.ts) ----
   wakeModels: () =>
     request<{ models: string[]; default: string; threshold: number }>(`${WAKEWORD_BASE}/api/models`),
 

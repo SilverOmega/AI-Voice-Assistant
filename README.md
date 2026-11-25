@@ -8,7 +8,7 @@ A private AI assistant that runs on your own computer. Type to it, talk to it, o
   - *Push to talk* (hold the button or Space).
   - *Hands-free* (end-of-speech detection).
   - *Wake word* ("Hey Jarvis", "Alexa", "Hey Mycroft", or your own trained model), with a follow-up window.
-- **Dictation**: the composer's mic button records a clip with MediaRecorder and transcribes it into the text box.
+- **Dictation**: the composer's mic button streams your speech to Whisper and the words appear in the text box as you talk.
 - **Pictures**: attach up to 4 images per message (button, paste or drag and drop) and ask about them. Needs a vision model such as `gemma3:4b`, or Claude.
 - **Interrupt**: a Stop button, plus optional barge-in (talk over the assistant).
 - **Tasks with review**: draft an email, add an event to your schedule, compile a document (for example, notes from the current chat), or trigger a workflow webhook. The assistant only drafts. You get a notification, review and edit the draft, and nothing is sent, saved or run until you press **Approve**.
@@ -126,7 +126,7 @@ If the computer's address changes, run the script again and restart the frontend
 ## Using it
 
 - **Text:** type and press Enter. Shift+Enter adds a new line. On phones and tablets Enter adds a new line and the send button sends. *Stop* aborts generation, and the partial reply is kept.
-- **Dictation:** click the mic inside the message box, speak, then click again. The text appears in the box for editing.
+- **Dictation:** click the mic inside the message box and speak. The words appear in the box while you talk, and each sentence is tidied up when you pause. Click the mic again to finish; the text stays in the box for you to edit and send. Speech is recognized on this computer. The default `STT_MODEL=base.en` only understands English: to dictate in another language, set a multilingual model such as `small` (slower on a CPU).
 - **Documents:** click the paperclip left of the message box (or paste or drop files onto it) and ask about them. Up to 5 per message, 20 MB each.
   - **Photos and files** opens the device's file picker. On iPhone, iPad and Android it also reaches iCloud Drive, Google Drive, OneDrive and Dropbox (through their apps); on a computer, their synced folders.
   - **From a link** fetches a file shared as "anyone with the link" from Google Drive, Google Docs/Sheets/Slides (exported as Word, Excel or PowerPoint), OneDrive or Dropbox, or any public file or web page. The assistant can't sign in to your cloud account, so private files need sharing or downloading first. Links into your own computer or network are refused.
@@ -267,6 +267,9 @@ All settings are environment variables. Put them in `.env`; Docker and the nativ
 | `PIPER_VOICE` | `en_US-lessac-medium` | Any [Piper voice](https://huggingface.co/rhasspy/piper-voices); downloaded on first use |
 | `PIPER_VOICES` | — | Voices for other reply languages, as JSON: `{"vi": "vi_VN-vais1000-medium", "de": "de_DE-thorsten-high"}`. Overrides the built-in choice per language code |
 | `VAD_SILENCE_MS` | `800` | Silence that ends a hands-free turn |
+| `DICTATION_SILENCE_MS` | `500` | Pause that ends a dictated sentence, which is then written out in full |
+| `DICTATION_PARTIAL_MS` | `700` | How often the words of the sentence still being spoken are updated. Raise it if dictation makes a slow computer lag |
+| `DICTATION_MAX_PHRASE_S` | `15` | A sentence longer than this is split, so updating it stays quick |
 | `WAKEWORD_DEFAULT` | `hey_jarvis` | Also offered: `alexa`, `hey_mycroft` |
 | `WAKEWORD_THRESHOLD` | `0.5` | Lower = more sensitive |
 | `APP_PORT` | `8080` | Docker UI port on this computer (no sign-in) |
@@ -368,7 +371,7 @@ services/
   wakeword/  app/{main,detector,config}.py, scripts/smoke_test.py
   sandbox/   app/{main,runner,config}.py (runs approved Python with limits)
   bridge/    app/{main,cli,config}.py (Claude with your subscription: runs Claude Code on this computer)
-frontend/    src/{App.tsx, components/, hooks/, audio/ (mic, player, recorder, pcm, voiceController), lib/ (api, sse, types, agentTrace)}
+frontend/    src/{App.tsx, components/, hooks/, audio/ (mic, player, dictation, pcm, voiceController), lib/ (api, sse, types, agentTrace)}
              nginx.conf + assistant.conf (local and HTTPS ports), certs.sh (HTTPS certificate), public/ (icons, manifest, sw.js)
 scripts/     setup/dev/test for Windows and Unix, lan (phones and tablets), bridge (Claude subscription), voice_client.py
 docs/        agents.md (how the agents work, and how to add a tool or helper)

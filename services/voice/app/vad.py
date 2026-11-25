@@ -117,6 +117,12 @@ class Endpointer:
             return VadEvent("discarded")
         return VadEvent("speech_end", audio)
 
+    def current_audio(self) -> np.ndarray:
+        """The utterance heard so far (with its preroll), or nothing between utterances."""
+        if not self.in_speech or not self._frames:
+            return np.zeros(0, dtype=np.float32)
+        return np.concatenate(self._frames)
+
     def flush(self) -> VadEvent | None:
         """Force-end an in-progress utterance (e.g. the client stopped streaming)."""
         return self._finish() if self.in_speech else None

@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 
 from .chat_client import ChatClient
 from .config import Settings, get_settings
+from .dictation import DictationSession
 from .engines import LANGUAGE_CODE, STTEngine, TTSEngine, WhisperSTT, build_tts
 from .pipeline import VoiceSession
 
@@ -156,6 +157,39 @@ def create_app(
             pass
         except RuntimeError as exc:  # sending on a closed socket
             log.info("voice socket closed: %s", exc)
+        finally:
+            await session.close()
+
+    @app.websocket("/ws/dictate")
+    async def dictate_socket(ws: WebSocket) -> None:
+        """Live dictation into the message box: partial and final text while the user talks."""
+        await ws.accept()
+        send_lock = asyncio.Lock()
+
+        async def send_json(msg: dict) -> None:
+            async with send_lock:
+                await ws.send_text(json.dumps(msg))
+
+        session = DictationSession(settings, ws.app.state.stt, send_json)
+        try:
+            while True:
+                message = await ws.receive()
+                if message["type"] == "websocket.disconnect":
+                    break
+                if message.get("bytes") is not None:
+                    await session.handle_audio(message["bytes"])
+                elif message.get("text") is not None:
+                    try:
+                        payload = json.loads(message["text"])
+                    except ValueError:
+                        await send_json({"type": "error", "message": "Invalid JSON"})
+                        continue
+                    if isinstance(payload, dict):
+                        await session.handle_control(payload)
+        except WebSocketDisconnect:
+            pass
+        except RuntimeError as exc:  # sending on a closed socket
+            log.info("dictation socket closed: %s", exc)
         finally:
             await session.close()
 

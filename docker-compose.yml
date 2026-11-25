@@ -156,6 +156,9 @@ services:
       PIPER_VOICE: ${PIPER_VOICE:-en_US-lessac-medium}
       PIPER_VOICES: ${PIPER_VOICES:-}
       VAD_SILENCE_MS: ${VAD_SILENCE_MS:-800}
+      DICTATION_SILENCE_MS: ${DICTATION_SILENCE_MS:-500}
+      DICTATION_PARTIAL_MS: ${DICTATION_PARTIAL_MS:-700}
+      DICTATION_MAX_PHRASE_S: ${DICTATION_MAX_PHRASE_S:-15}
     volumes:
       - voice-models:/models
     ports:
