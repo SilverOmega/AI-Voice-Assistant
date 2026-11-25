@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { ClipRecorder } from "../audio/recorder";
+import { LiveDictation } from "../audio/dictation";
 import { api } from "../lib/api";
+import { liveText } from "../lib/dictationText";
 import { ATTACH_ACCEPT, MAX_FILES, MAX_FILE_MB, describeFile, isImage } from "../lib/files";
 import { MAX_IMAGES, imageFiles, prepareImage, type PreparedImage } from "../lib/images";
 import { requestNotifyPermission } from "../lib/notify";
@@ -69,7 +70,7 @@ function hostOf(url: string): string {
 }
 
 /**
- * Text input with MediaRecorder dictation (speech is transcribed into the box, not sent),
+ * Text input with live dictation (words appear in the box as they are spoken; nothing is sent),
  * pictures and documents (the paperclip, paste, or drag and drop) and documents from a link.
  */
 export function Composer({
@@ -94,8 +95,10 @@ export function Composer({
   const [linkOpen, setLinkOpen] = useState(false);
   const [link, setLink] = useState("");
   const [dragging, setDragging] = useState(false);
-  const [dictation, setDictation] = useState<"idle" | "recording" | "transcribing">("idle");
-  const recorder = useRef(new ClipRecorder());
+  const [dictation, setDictation] = useState<"idle" | "recording" | "finishing">("idle");
+  // Live dictation: the session, and what the box is built from while it runs.
+  const live = useRef<LiveDictation | null>(null);
+  const heard = useRef({ before: "", finals: [] as string[], partial: "" });
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const taskMenuRef = useRef<HTMLDivElement>(null);
@@ -112,11 +115,16 @@ export function Composer({
     return () => document.removeEventListener("pointerdown", away);
   }, [menu]);
 
+  // Leaving the page (or the chat) mid-dictation turns the microphone off.
+  useEffect(() => () => live.current?.cancel(), []);
+
   const uploading = docs.some((d) => !d.file);
   const readyDocs = docs.flatMap((d) => (d.file ? [d.file] : []));
-  const canSend = task
-    ? text.trim() !== "" && !drafting
-    : (text.trim() !== "" || images.length > 0 || readyDocs.length > 0) && preparing === 0 && !uploading && !drafting;
+  const canSend =
+    dictation === "idle" &&
+    (task
+      ? text.trim() !== "" && !drafting
+      : (text.trim() !== "" || images.length > 0 || readyDocs.length > 0) && preparing === 0 && !uploading && !drafting);
   const activeTask = TASKS.find((t) => t.kind === task);
 
   const submit = () => {
@@ -201,27 +209,55 @@ export function Composer({
     if (doc.file) void api.deleteFile(doc.file.id).catch(() => {});
   };
 
+  const showHeard = () => {
+    const h = heard.current;
+    setText(liveText(h.before, h.finals, h.partial));
+  };
+
+  const endDictation = (session: LiveDictation) => {
+    if (live.current !== session) return;
+    live.current = null;
+    heard.current.partial = "";
+    showHeard();
+    setDictation("idle");
+    inputRef.current?.focus();
+  };
+
   const toggleDictation = async () => {
-    if (dictation === "recording") {
-      setDictation("transcribing");
-      try {
-        const clip = await recorder.current.stop();
-        const { text: heard } = await api.transcribe(clip, dictationLanguage);
-        if (heard) setText((t) => (t ? `${t} ${heard}` : heard));
-        else onError("No speech was recognized.");
-      } catch (err) {
-        onError(`Dictation failed: ${(err as Error).message}`);
-      } finally {
-        setDictation("idle");
-        inputRef.current?.focus();
-      }
+    if (dictation === "finishing") return;
+    const running = live.current;
+    if (running) {
+      setDictation("finishing");
+      await running.stop(); // waits for the last phrase
+      if (heard.current.finals.length === 0) onError("No speech was recognized.");
+      endDictation(running);
       return;
     }
+    heard.current = { before: text, finals: [], partial: "" };
+    const session = new LiveDictation({
+      onPartial: (t) => {
+        heard.current.partial = t;
+        showHeard();
+      },
+      onFinal: (t) => {
+        if (t.trim()) heard.current.finals.push(t);
+        heard.current.partial = "";
+        showHeard();
+      },
+      onError: (message) => onError(`Dictation: ${message}`),
+      onLost: () => {
+        onError("Dictation stopped: the connection to the voice service was lost.");
+        endDictation(session);
+      },
+    });
+    live.current = session;
+    setDictation("recording");
     try {
-      await recorder.current.start();
-      setDictation("recording");
+      await session.start(dictationLanguage);
     } catch (err) {
-      onError(`Could not start recording: ${(err as Error).message}`);
+      session.cancel();
+      if (live.current === session) onError(`Live dictation isn't available: ${(err as Error).message}`);
+      endDictation(session);
     }
   };
 
@@ -357,6 +393,7 @@ export function Composer({
             ref={inputRef}
             rows={1}
             value={text}
+            readOnly={dictation !== "idle"}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing && !touchKeyboard()) {
@@ -542,7 +579,7 @@ export function Composer({
           )}
           <button
             onClick={toggleDictation}
-            disabled={dictation === "transcribing"}
+            disabled={dictation === "finishing"}
             title={dictation === "recording" ? "Stop dictation" : "Dictate (speech to text)"}
             aria-label="Dictate"
             className={`relative rounded-xl p-2 ${
@@ -552,7 +589,7 @@ export function Composer({
             } disabled:opacity-50`}
           >
             <span className="relative">
-              {dictation === "transcribing" ? <Spinner /> : <MicIcon />}
+              {dictation === "finishing" ? <Spinner /> : <MicIcon />}
             </span>
           </button>
           <ModelPicker disabled={streaming || drafting} onError={onError} />

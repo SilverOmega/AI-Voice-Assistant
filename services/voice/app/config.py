@@ -52,6 +52,14 @@ class Settings(BaseSettings):
     vad_min_utterance_ms: int = 300
     vad_max_utterance_s: float = 30.0
 
+    # Live dictation into the message box (/ws/dictate): a pause this long ends a phrase, which
+    # is then transcribed in full; while a phrase goes on, what was said so far is transcribed
+    # about every DICTATION_PARTIAL_MS. Phrases are cut at DICTATION_MAX_PHRASE_S so redoing
+    # them stays quick on a CPU.
+    dictation_silence_ms: int = Field(default=500, ge=200, le=3_000)
+    dictation_partial_ms: int = Field(default=700, ge=0, le=5_000)
+    dictation_max_phrase_s: float = Field(default=15.0, ge=3.0, le=30.0)
+
 
 @lru_cache
 def get_settings() -> Settings:

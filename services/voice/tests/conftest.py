@@ -19,13 +19,15 @@ class FakeSTT:
         self.calls = 0
         self.multilingual = True
         self.languages: list[str | None] = []
+        self.quick: list[bool] = []
 
     def load(self) -> None:
         pass
 
-    def transcribe(self, audio, language: str | None = None) -> Transcript:
+    def transcribe(self, audio, language: str | None = None, quick: bool = False) -> Transcript:
         self.calls += 1
         self.languages.append(language)
+        self.quick.append(quick)
         return Transcript(text=self.text, language="en", duration=1.0, elapsed=0.01)
 
 
